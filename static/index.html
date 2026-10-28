@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oligo viewer</title>
+<style>
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: #FFFFFF; color: #1A1A1A; }
+body {
+  padding: 16px 20px 24px;
+  font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
+#seq {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 14px;
+  color: #1A1A1A;
+  background: #FFFFFF;
+  border: 1px solid #C8C8C8;
+  border-radius: 6px;
+  resize: vertical;
+}
+#seq:focus { outline: 2px solid #0072B2; outline-offset: 1px; }
+#summary { margin: 10px 0 0; min-height: 1.4em; font-size: 14px; font-weight: 600; }
+#problems { margin: 6px 0 0; font-size: 13px; }
+.problem { padding: 2px 0; }
+.problem.error { color: #B00020; }
+.problem.warning { color: #8A6D00; }
+#scroll {
+  margin: 12px 0 0;
+  border: 1px solid #E2E2E2;
+  border-radius: 8px;
+  background: #FFFFFF;
+  overflow: auto;
+  min-height: 120px;
+  max-height: 60vh;
+}
+#stagewrap { display: inline-block; min-width: 100%; }
+#stage { padding: 12px; min-width: max-content; }
+#stage svg { display: block; }
+.hint { margin: 24px 6px; color: #6B6B6B; font-size: 14px; }
+.stage-message { margin: 24px auto; text-align: center; color: #6B6B6B; font-size: 14px; }
+#legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 16px 0 0; }
+.legend-item { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 56px; }
+.legend-sample { display: flex; align-items: center; justify-content: center; }
+.legend-base { width: 24px; height: 24px; border-radius: 4px; font-size: 13px; font-weight: 700; }
+.legend-sugar { width: 24px; height: 24px; border-radius: 4px; border: 1px solid #B0B0B0; font-size: 12px; font-weight: 700; }
+.legend-link { width: 40px; height: 2px; background: #6B6B6B; }
+.legend-link-ps { height: 4px; background: #B00020; }
+.legend-tag {
+  padding: 2px 5px;
+  color: #1A1A1A;
+  background: #FFF4D6;
+  border: 1px solid #B58900;
+  border-radius: 4px;
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 12px;
+}
+.legend-caption { max-width: 130px; color: #6B6B6B; font-size: 11px; text-align: center; }
+#controls { display: flex; align-items: center; gap: 10px; margin: 16px 0 0; font-size: 13px; }
+#controls label { color: #6B6B6B; }
+#zoom { width: 160px; }
+#zoomreadout { min-width: 40px; font-variant-numeric: tabular-nums; }
+#fit {
+  padding: 4px 10px;
+  font: inherit;
+  color: #1A1A1A;
+  background: #F5F5F5;
+  border: 1px solid #C8C8C8;
+  border-radius: 6px;
+  cursor: pointer;
+}
+#fit:hover { background: #EBEBEB; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Oligo viewer</h1>
+  <textarea id="seq" rows="2" spellcheck="false" autofocus placeholder="/5Biosg/TTTTTT*GGGGGG/3Bio/"></textarea>
+  <div id="summary"></div>
+  <div id="problems"></div>
+  <div id="scroll">
+    <div id="stagewrap">
+      <div id="stage"></div>
+    </div>
+  </div>
+  <div id="legend"></div>
+  <div id="controls">
+    <label for="zoom">Zoom</label>
+    <input type="range" id="zoom" min="40" max="200" value="100">
+    <span id="zoomreadout">×1.0</span>
+    <button type="button" id="fit">Fit</button>
+  </div>
+</main>
+<script>
+// Pipeline: textarea input (debounced 120 ms) -> GET /api/render?seq=... -> JSON
+// {ok, svg, summary, legend, warnings, errors}. The server draws; this file only
+// injects the SVG, rebuilds the legend from data.legend, and applies zoom.
+// Zoom sets the SVG's CSS width/height rather than a transform, so the scroll
+// area shrinks with the picture; Fit picks the largest zoom that leaves no overflow.
+(function () {
+  "use strict";
+
+  var seqBox = document.getElementById("seq");
+  var summaryBox = document.getElementById("summary");
+  var problemsBox = document.getElementById("problems");
+  var stageBox = document.getElementById("stage");
+  var scrollBox = document.getElementById("scroll");
+  var legendBox = document.getElementById("legend");
+  var zoomInput = document.getElementById("zoom");
+  var zoomReadout = document.getElementById("zoomreadout");
+  var fitButton = document.getElementById("fit");
+
+  var debounceMs = 120;
+  var debounceTimer = null;
+
+  function clearElement(element) {
+    while (element.firstChild) {
+      element.removeChild(element.firstChild);
+    }
+  }
+
+  function applyZoom() {
+    var scale = Number(zoomInput.value) / 100;
+    var svg = stageBox.querySelector("svg");
+    if (svg) {
+      var width = parseFloat(svg.getAttribute("width")) || 0;
+      var height = parseFloat(svg.getAttribute("height")) || 0;
+      svg.style.width = width ? (width * scale) + "px" : "";
+      svg.style.height = height ? (height * scale) + "px" : "";
+      svg.style.maxWidth = "none";
+    }
+    zoomReadout.textContent = "×" + scale.toFixed(2);
+  }
+
+  function fitToWindow() {
+    var contentWidth = stageBox.offsetWidth;
+    if (!contentWidth) {
+      return;
+    }
+    var containerWidth = scrollBox.clientWidth;
+    var percent = Math.min(100, Math.floor(containerWidth / contentWidth * 100));
+    zoomInput.value = String(percent);
+    applyZoom();
+  }
+
+  function appendProblem(problem, kind) {
+    var row = document.createElement("div");
+    row.className = "problem " + kind;
+    row.textContent = problem.position + ": " + problem.message + " (" + problem.token + ")";
+    problemsBox.appendChild(row);
+  }
+
+  function showProblems(data) {
+    clearElement(problemsBox);
+    data.errors.forEach(function (problem) {
+      appendProblem(problem, "error");
+    });
+    data.warnings.forEach(function (problem) {
+      appendProblem(problem, "warning");
+    });
+  }
+
+  function showHint() {
+    clearElement(stageBox);
+    clearElement(legendBox);
+    clearElement(problemsBox);
+    summaryBox.textContent = "";
+    var hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = "Paste an IDT sequence, for example /5Biosg/TTTTTT*GGGGGG/3Bio/";
+    stageBox.appendChild(hint);
+  }
+
+  function showStageMessage(text) {
+    var message = document.createElement("p");
+    message.className = "stage-message";
+    message.textContent = text;
+    stageBox.appendChild(message);
+  }
+
+  function buildLegend(entries) {
+    clearElement(legendBox);
+    entries.forEach(function (entry) {
+      var cell = document.createElement("div");
+      cell.className = "legend-item";
+
+      var sample = document.createElement("div");
+      sample.className = "legend-sample";
+
+      var caption = document.createElement("div");
+      caption.className = "legend-caption";
+
+      if (entry.kind === "base") {
+        sample.className = "legend-sample legend-base";
+        sample.style.backgroundColor = entry.color;
+        sample.style.color = entry.text;
+        if (entry.label.length === 1) {
+          sample.textContent = entry.label;
+        }
+        caption.textContent = entry.label;
+      } else if (entry.kind === "sugar") {
+        sample.className = "legend-sample legend-sugar";
+        sample.textContent = entry.label;
+        caption.textContent = entry.meaning;
+      } else if (entry.kind === "link") {
+        sample.className = "legend-sample legend-link";
+        if (entry.label === "phosphorothioate") {
+          sample.className = "legend-sample legend-link legend-link-ps";
+        }
+        caption.textContent = entry.label;
+      } else if (entry.kind === "tag") {
+        sample.className = "legend-sample legend-tag";
+        sample.textContent = entry.label;
+        caption.textContent = "modification";
+      }
+
+      cell.appendChild(sample);
+      cell.appendChild(caption);
+      legendBox.appendChild(cell);
+    });
+  }
+
+  function showPayload(data) {
+    showProblems(data);
+
+    if (!data.ok) {
+      clearElement(stageBox);
+      clearElement(legendBox);
+      summaryBox.textContent = "";
+      var firstMessage = data.errors.length > 0 ? data.errors[0].message : "";
+      showStageMessage(firstMessage);
+      return;
+    }
+
+    stageBox.innerHTML = data.svg;
+    summaryBox.textContent = data.summary;
+    buildLegend(data.legend);
+    applyZoom();
+  }
+
+  function showOffline() {
+    clearElement(stageBox);
+    clearElement(legendBox);
+    clearElement(problemsBox);
+    summaryBox.textContent = "";
+    var row = document.createElement("div");
+    row.className = "problem error";
+    row.textContent = `Cannot reach the viewer's server. Start "Start Oligo Viewer.bat" and reload.`;
+    problemsBox.appendChild(row);
+  }
+
+  function requestRender(raw) {
+    if (raw.trim() === "") {
+      showHint();
+      return;
+    }
+    fetch("/api/render?seq=" + encodeURIComponent(raw))
+      .then(function (response) {
+        return response.json();
+      })
+      .then(showPayload)
+      .catch(showOffline);
+  }
+
+  seqBox.addEventListener("input", function () {
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer);
+    }
+    debounceTimer = window.setTimeout(function () {
+      debounceTimer = null;
+      requestRender(seqBox.value);
+    }, debounceMs);
+  });
+
+  zoomInput.addEventListener("input", applyZoom);
+  fitButton.addEventListener("click", fitToWindow);
+
+  seqBox.value = "/5Biosg/TTTTTT*GGGGGG/3Bio/";
+  applyZoom();
+  requestRender(seqBox.value);
+})();
+</script>
+</body>
+</html>
