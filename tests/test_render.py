@@ -3,7 +3,12 @@
 import unittest
 
 from notation import parse
-from render import legend_items, render_svg
+from render import (
+    legend_items,
+    render_structure_svg,
+    render_svg,
+    structure_legend_items,
+)
 
 
 class RenderSvgTest(unittest.TestCase):
@@ -74,6 +79,71 @@ class RenderSvgTest(unittest.TestCase):
     def test_empty_sequence_raises(self):
         with self.assertRaises(ValueError):
             render_svg(parse(""))
+
+
+class StructureRenderTest(unittest.TestCase):
+    def test_stacked_stem_loop(self):
+        pairs = tuple((index, 19 - index) for index in range(8))
+        svg, layout = render_structure_svg("ACGTACGTACGTACGTACGT", pairs)
+        self.assertEqual(layout, "stem-loop")
+        self.assertEqual(svg.count('class="base-pair"'), 8)
+        self.assertEqual(svg.count('class="base loop"'), 4)
+        self.assertEqual(svg, render_structure_svg("ACGTACGTACGTACGTACGT", pairs)[0])
+        self.assertIn('width="', svg)
+        self.assertIn('height="', svg)
+        self.assertNotIn("NaN", svg)
+
+    def test_two_disparate_hairpins_use_tree_layout(self):
+        pairs = ((0, 7), (1, 6), (8, 15), (9, 14))
+        svg, layout = render_structure_svg("AAAACCCCAAAAGGGG", pairs)
+        self.assertEqual(layout, "tree")
+        self.assertEqual(svg.count('class="base-pair"'), 4)
+        self.assertEqual(svg.count('class="base loop"'), 8)
+        self.assertIn('data-layout="tree"', svg)
+
+    def test_two_hairpins_with_exterior_linker_use_tree(self):
+        pairs = (
+            (0, 24), (1, 23), (2, 22), (3, 21), (4, 20), (5, 19),
+            (6, 18), (7, 17), (8, 16), (9, 15),
+            (30, 42), (31, 41), (32, 40), (33, 39),
+        )
+        svg, layout = render_structure_svg("A" * 48, pairs)
+        self.assertEqual(layout, "tree")
+        self.assertEqual(svg.count('class="base-pair"'), 14)
+        self.assertEqual(svg.count('class="base loop"'), 10)
+
+    def test_multiloop_uses_tree(self):
+        pairs = (
+            (0, 29), (1, 28),
+            (4, 12), (5, 11),
+            (16, 24), (17, 23),
+        )
+        svg, layout = render_structure_svg("A" * 30, pairs)
+        self.assertEqual(layout, "tree")
+        self.assertEqual(svg.count('class="base-pair"'), 6)
+        self.assertEqual(svg.count('class="base loop"'), 18)
+
+    def test_bulge_bases_are_labelled(self):
+        svg, layout = render_structure_svg("ACGTACGTAA", ((0, 9), (2, 7)))
+        self.assertEqual(layout, "stem-loop")
+        self.assertEqual(svg.count('class="base bulge"'), 2)
+
+    def test_no_pairs_returns_empty(self):
+        self.assertEqual(render_structure_svg("ACGT", ()), ("", "none"))
+
+    def test_invalid_pairs_raise(self):
+        with self.assertRaises(ValueError):
+            render_structure_svg("ACGT", ((0, 9),))
+        with self.assertRaises(ValueError):
+            render_structure_svg("ACGT", ((0, 3), (1, 2), (0, 1)))
+        with self.assertRaises(ValueError):
+            render_structure_svg("ACGT", ((0, 2), (1, 3)))
+
+    def test_structure_legend_first_appearance(self):
+        items = structure_legend_items("ACGTAC")
+        self.assertEqual([item["label"] for item in items], ["A", "C", "G", "T"])
+        self.assertEqual(items[0]["kind"], "base")
+        self.assertEqual(items[0]["color"], "#009E73")
 
 
 class LegendItemsTest(unittest.TestCase):

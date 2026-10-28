@@ -1,9 +1,13 @@
-# OligoVisualizer V1
+# OligoVisualizer 2.0
 
 Paste an oligonucleotide in IDT's own notation and see a schematic of the molecule: one
 horizontal 5' → 3' row, one coloured circle per nucleotide, a mini sugar ring below each
 modified position, the linkage drawn as the connector between circles, and every modification
 code drawn as a labelled tag.
+
+The **Secondary structure** tab asks IDT's OligoAnalyzer for hairpin foldings, picks the one with
+the lowest Gibbs free energy (ΔG), and draws its base-pair map as native SVG. The linear view is
+still the default and still works without an IDT account.
 
 The on-screen heading still reads "Oligo viewer"; this file is the project's documentation.
 
@@ -32,6 +36,33 @@ Double-click **`Start Oligo Viewer.bat`**.
 |`12 nt · 1 PS linkage · 2 modifications`|Length, number of thioated linkages, number of modification codes.|
 
 A legend under the picture lists only the glyphs that sequence actually uses.
+
+## Predict a secondary structure
+
+1. Click **Sign in to IDT** and enter your IDT account in the local form. The password is sent to
+   this local viewer and forwarded to IDT over HTTPS; it is not stored or logged. Only the IDT
+   session and anti-forgery tokens stay in the viewer process's memory.
+2. Click **Predict structure**. The tool calls the real IDT OligoAnalyzer hairpin endpoint with
+   the same default conditions the Analyzer uses for hairpin folding: DNA mode, 25 °C, 50 mM
+   Na⁺, 3 mM Mg²⁺, 50% suboptimality, 20 maximum foldings, linear sequence. DNA is IDT's
+   default mode even when the sequence contains U.
+3. The view switches to the fold with the lowest **ΔG** in kcal/mol (not just the first
+   single-hairpin fold). The summary shows ΔG, Tm and which structure was chosen; the detail line
+   shows ΔH, ΔS and the conditions.
+4. A fold that is one continuous stem-loop is drawn as circles on two arms with a loop. A fold
+   with multiple stems is drawn as connected stem-loops: separate hairpins sit side by side,
+   nested stems stack, and multiloops branch above their parent stem. A labelled arc diagram is
+   only a last-resort fallback. The structure drawing shows bases only; modification codes remain
+   visible in the linear view.
+
+Modified oligos are sent to IDT exactly as written. The tool does not strip `*`, `+`, `r`, `m`,
+`/Code/` tags or custom mixes; the Analyzer decides whether it accepts a particular chemistry.
+If it rejects one, the IDT error is shown and the linear view remains available.
+
+Predictions are cached per sequence for the running viewer. Switching tabs reuses the cached
+result, and clicking **Predict structure** again reuses it without a second IDT call. **Sign out**
+clears the IDT session; predictions then ask for sign-in again. The password field is cleared
+immediately after submission.
 
 ## What you can paste
 
@@ -71,34 +102,57 @@ costs you that one character, not the sequence.
   with the code's base letter and a sugar icon, and do not count as modifications in the summary.
 - Degenerate bases are hatched, custom mixes are split proportionally — a mixture with defined
   percentages is a different fact from an ambiguity code.
-- Rounding is not involved anywhere: lengths and counts are exact.
+- Lengths and counts are exact. ΔG, Tm, ΔH and ΔS are IDT's values, formatted for display only;
+  the tool never recomputes them.
 
 ## Limits
 
-- About 500 nucleotides is the practical maximum; the drawing is one row and grows linearly, so
-  beyond that it gets very wide and slow. There is no guard.
-- This is a structure viewer only. Melting temperature, secondary structure, pKa and
-  intramolecular interactions are not calculated here.
+- About 500 nucleotides is the practical maximum for the linear drawing; it is one row and grows
+  linearly, so beyond that it gets very wide and slow. There is no guard.
+- Secondary structure requires internet access and a signed-in IDT account. The prediction uses
+  IDT's defaults listed above; they are displayed but not editable in this version.
+- ΔG and Tm are IDT's values, not recalculated here. Complex folds are drawn as connected
+  stem-loops, not as a full two-dimensional chemical diagram with sugar and modification details.
+- If your IDT account presents an MFA/CAPTCHA challenge, this local form cannot complete it. Use
+  IDT in a normal browser for that account.
 
 ## Files
 
 |File|What it is|
 |---|---|
 |`Start Oligo Viewer.bat`|The only thing you need to run. Sets up `.venv` once, then starts the viewer.|
-|`app.py`|Local web server: serves the page and the `/api/render` endpoint (8765–8785).|
+|`app.py`|Local web server: page, `/api/render`, `/api/structure`, and `/api/idt/*` (8765–8785).|
+|`idt.py`|IDT sign-in, hairpin request, CT base-pair map retrieval, ΔG selection.|
 |`notation.py`|Parses the IDT string into a sequence model; collects problems instead of raising.|
-|`render.py`|Draws the sequence model as SVG; owns the palette and geometry.|
-|`static/index.html`|The page: textarea, debounced fetch, zoom, legend. No libraries, no build step.|
+|`render.py`|Draws the linear schematic and secondary-structure SVG; owns palette and geometry.|
+|`static/index.html`|The page: textarea, IDT sign-in, tabs, debounced fetch, zoom, legend. No build step.|
+|`dev_run.py`|Optional development launcher; reads gitignored `.env` for auto-login. Not used by the `.bat`.|
 |`GLOSSARY.md`|Domain vocabulary, including why "thiolated" is not used.|
 |`docs/adr/0001-server-rendered-svg.md`|Why the drawing happens in Python rather than the browser.|
-|`tests/`|52 `unittest` tests: parser, renderer, HTTP contract.|
+|`tests/`|107 `unittest` tests: parser, renderers, IDT client, HTTP contract.|
+
+## Development auto-login (optional)
+
+For repeated local testing only, create a gitignored `.env` beside `app.py`:
+
+```
+IDT_USERNAME=your-idt-username
+IDT_PASSWORD=your-idt-password
+```
+
+Then run `.venv\Scripts\python.exe dev_run.py`. It signs in to IDT once and serves at
+`http://127.0.0.1:8767/`. The normal `Start Oligo Viewer.bat` ignores `.env`; nothing is installed
+system-wide. `.gitignore` is not encryption, so remove the file when you no longer need it.
 
 ## Tests
 
 ```
-py -m unittest tests.test_notation tests.test_render -v      # no venv needed
-.venv\Scripts\python.exe -m unittest discover -v             # all 52, includes the server
+py -m unittest tests.test_notation tests.test_render tests.test_idt -v   # no network, no venv
+.venv\Scripts\python.exe -m unittest discover -v                        # all 107, server too
 ```
+
+No test contacts idtdna.com; the IDT client is exercised with fake HTTP methods and fake
+responses.
 
 ## If something goes wrong
 
@@ -108,3 +162,7 @@ py -m unittest tests.test_notation tests.test_render -v      # no venv needed
 |Page says `Cannot reach the viewer's server`|The console window was closed, or the file was opened directly instead of through the `.bat`. Start the `.bat` again and reload.|
 |Console prints a port other than 8765|Something else already holds 8765. Use the URL the console printed.|
 |No browser opened|Open the printed URL by hand; the viewer is running either way.|
+|Secondary structure says `Sign in to IDT`|Sign in with the local form; the session lives only in the running viewer process.|
+|IDT sign-in or prediction gives an HTTP/auth error|IDT may be down, the login page may have changed, or the session expired. Sign in again; the linear view is unaffected.|
+|A sequence has no predicted structure|IDT found no base pairs. This is a warning, not a drawing failure.|
+|MFA/CAPTCHA appears on IDT's site|This local form cannot complete it. Use IDT in a normal browser for that account.|

@@ -83,6 +83,36 @@ The small labelled box showing a modification code verbatim, attached to the til
 connector it belongs to.
 _Avoid_: Badge, chip, sticker
 
+## Prediction
+
+**Hairpin**:
+A fold in which a single chain doubles back on itself: two antiparallel stem arms closed by a
+loop. Distinct from a self-dimer, which involves two separate chains.
+
+**Base-pair map**:
+The list of which nucleotide positions pair with which, as predicted for one fold. It is not a
+chemical drawing and does not show modification tags.
+
+**Gibbs free energy (ΔG)**:
+The predicted folding free energy in kcal/mol. More negative means a more favourable fold under
+the stated conditions. The tool shows IDT's value; it never recomputes it.
+
+**Melting temperature (Tm)**:
+The temperature at which half the predicted structure is unfolded, in °C, as reported by IDT for
+the chosen fold.
+
+**Lowest-ΔG fold**:
+The structure with the most negative ΔG among all structures IDT returns, regardless of whether
+it is a single hairpin or a more complex fold.
+
+**Suboptimality**:
+IDT's allowance, in percent, for returning structures above the minimum free energy. A larger
+value returns more candidate folds; it does not change which returned fold is selected.
+
+**Secondary-structure drawing**:
+The view of the chosen fold: a stem-loop for one continuous hairpin, or a connected stem-loop
+tree when the fold has several stems or a multiloop. A base-pair arc diagram is only a fallback.
+
 ## The second meaning of "thiolated"
 
 "Thiolated linkage" is ambiguous and is not used. Say **phosphorothioate linkage** for the

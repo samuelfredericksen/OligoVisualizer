@@ -33,6 +33,64 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
 .problem { padding: 2px 0; }
 .problem.error { color: #B00020; }
 .problem.warning { color: #8A6D00; }
+#idtbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+#idtstatus { color: #6B6B6B; }
+#idtbar button, #idtform button, .tab, #predict {
+  padding: 4px 10px;
+  font: inherit;
+  color: #1A1A1A;
+  background: #F5F5F5;
+  border: 1px solid #C8C8C8;
+  border-radius: 6px;
+  cursor: pointer;
+}
+#idtbar button:hover, #idtform button:hover, .tab:hover, #predict:hover {
+  background: #EBEBEB;
+}
+#idtform {
+  display: grid;
+  gap: 6px;
+  max-width: 440px;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #E2E2E2;
+  border-radius: 8px;
+  font-size: 13px;
+}
+#idtform label { display: grid; gap: 3px; }
+#idtform input {
+  padding: 5px 7px;
+  font: inherit;
+  color: #1A1A1A;
+  background: #FFFFFF;
+  border: 1px solid #C8C8C8;
+  border-radius: 5px;
+}
+#idtform p.note { margin: 0; color: #6B6B6B; font-size: 12px; }
+#idtformerror { min-height: 1.2em; }
+#idtform[hidden], #structurebar[hidden] { display: none; }
+#views {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+.tab.active {
+  color: #0072B2;
+  background: #EAF4FB;
+  border-color: #0072B2;
+}
+#predict { margin-left: auto; }
+#structurebar { margin: 8px 0 0; font-size: 13px; }
+#structuresummary { font-weight: 600; }
+#structuredetail { margin-top: 2px; color: #6B6B6B; font-size: 12px; }
 #scroll {
   margin: 12px 0 0;
   border: 1px solid #E2E2E2;
@@ -86,6 +144,28 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
   <textarea id="seq" rows="2" spellcheck="false" autofocus placeholder="/5Biosg/TTTTTT*GGGGGG/3Bio/"></textarea>
   <div id="summary"></div>
   <div id="problems"></div>
+  <div id="idtbar">
+    <span id="idtstatus">Not signed in to IDT</span>
+    <button type="button" id="idtsignin">Sign in to IDT</button>
+    <button type="button" id="idtsignout" hidden>Sign out</button>
+  </div>
+  <form id="idtform" hidden>
+    <label>IDT username <input id="idtuser" type="text" autocomplete="username" spellcheck="false"></label>
+    <label>IDT password <input id="idtpass" type="password" autocomplete="off"></label>
+    <div><button type="submit" id="idtsubmit">Sign in</button>
+         <span id="idtformerror" class="problem error"></span></div>
+    <p class="note">Your password goes to this local viewer and is forwarded to IDT over HTTPS. It
+    is not stored or logged.</p>
+  </form>
+  <div id="views">
+    <button type="button" class="tab active" id="view-linear" aria-pressed="true">Linear</button>
+    <button type="button" class="tab" id="view-structure" aria-pressed="false">Secondary structure</button>
+    <button type="button" id="predict">Predict structure</button>
+  </div>
+  <div id="structurebar" hidden>
+    <div id="structuresummary"></div>
+    <div id="structuredetail"></div>
+  </div>
   <div id="scroll">
     <div id="stagewrap">
       <div id="stage"></div>
@@ -100,11 +180,10 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
   </div>
 </main>
 <script>
-// Pipeline: textarea input (debounced 120 ms) -> GET /api/render?seq=... -> JSON
-// {ok, svg, summary, legend, warnings, errors}. The server draws; this file only
-// injects the SVG, rebuilds the legend from data.legend, and applies zoom.
-// Zoom sets the SVG's CSS width/height rather than a transform, so the scroll
-// area shrinks with the picture; Fit picks the largest zoom that leaves no overflow.
+// Pipeline: textarea input (debounced 120 ms) -> GET /api/render?seq=... for the
+// linear view. Predict -> GET /api/structure?seq=... for the IDT Analyzer fold.
+// The server draws both SVGs; this file injects the current view, rebuilds the
+// legend, switches tabs, and applies zoom to whichever SVG is visible.
 (function () {
   "use strict";
 
@@ -118,8 +197,32 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
   var zoomReadout = document.getElementById("zoomreadout");
   var fitButton = document.getElementById("fit");
 
+  var idtStatus = document.getElementById("idtstatus");
+  var idtSignIn = document.getElementById("idtsignin");
+  var idtSignOut = document.getElementById("idtsignout");
+  var idtForm = document.getElementById("idtform");
+  var idtUser = document.getElementById("idtuser");
+  var idtPass = document.getElementById("idtpass");
+  var idtSubmit = document.getElementById("idtsubmit");
+  var idtFormError = document.getElementById("idtformerror");
+  var viewLinear = document.getElementById("view-linear");
+  var viewStructure = document.getElementById("view-structure");
+  var predictButton = document.getElementById("predict");
+  var structureBar = document.getElementById("structurebar");
+  var structureSummary = document.getElementById("structuresummary");
+  var structureDetail = document.getElementById("structuredetail");
+
   var debounceMs = 120;
   var debounceTimer = null;
+  var linearRequestId = 0;
+  var linearData = null;
+  var structureData = null;
+  var structureForRaw = "";
+  var currentView = "linear";
+  var signedIn = false;
+  var structureLoading = false;
+  var structureRequestId = 0;
+  var pendingPredict = false;
 
   function clearElement(element) {
     while (element.firstChild) {
@@ -130,17 +233,22 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
   function applyZoom() {
     var scale = Number(zoomInput.value) / 100;
     var svg = stageBox.querySelector("svg");
-    if (svg) {
-      var width = parseFloat(svg.getAttribute("width")) || 0;
-      var height = parseFloat(svg.getAttribute("height")) || 0;
-      svg.style.width = width ? (width * scale) + "px" : "";
-      svg.style.height = height ? (height * scale) + "px" : "";
-      svg.style.maxWidth = "none";
+    if (!svg) {
+      zoomReadout.textContent = "×" + scale.toFixed(2);
+      return;
     }
+    var width = parseFloat(svg.getAttribute("width")) || 0;
+    var height = parseFloat(svg.getAttribute("height")) || 0;
+    svg.style.width = width ? (width * scale) + "px" : "";
+    svg.style.height = height ? (height * scale) + "px" : "";
+    svg.style.maxWidth = "none";
     zoomReadout.textContent = "×" + scale.toFixed(2);
   }
 
   function fitToWindow() {
+    if (!stageBox.querySelector("svg")) {
+      return;
+    }
     var contentWidth = stageBox.offsetWidth;
     if (!contentWidth) {
       return;
@@ -154,29 +262,24 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
   function appendProblem(problem, kind) {
     var row = document.createElement("div");
     row.className = "problem " + kind;
-    row.textContent = problem.position + ": " + problem.message + " (" + problem.token + ")";
+    var text = problem.position + ": " + problem.message;
+    if (problem.token) {
+      text += " (" + problem.token + ")";
+    }
+    row.textContent = text;
     problemsBox.appendChild(row);
   }
 
   function showProblems(data) {
     clearElement(problemsBox);
-    data.errors.forEach(function (problem) {
+    var errors = data && data.errors ? data.errors : [];
+    var warnings = data && data.warnings ? data.warnings : [];
+    errors.forEach(function (problem) {
       appendProblem(problem, "error");
     });
-    data.warnings.forEach(function (problem) {
+    warnings.forEach(function (problem) {
       appendProblem(problem, "warning");
     });
-  }
-
-  function showHint() {
-    clearElement(stageBox);
-    clearElement(legendBox);
-    clearElement(problemsBox);
-    summaryBox.textContent = "";
-    var hint = document.createElement("p");
-    hint.className = "hint";
-    hint.textContent = "Paste an IDT sequence, for example /5Biosg/TTTTTT*GGGGGG/3Bio/";
-    stageBox.appendChild(hint);
   }
 
   function showStageMessage(text) {
@@ -188,7 +291,7 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
 
   function buildLegend(entries) {
     clearElement(legendBox);
-    entries.forEach(function (entry) {
+    (entries || []).forEach(function (entry) {
       var cell = document.createElement("div");
       cell.className = "legend-item";
 
@@ -228,22 +331,125 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
     });
   }
 
-  function showPayload(data) {
-    showProblems(data);
-
-    if (!data.ok) {
-      clearElement(stageBox);
-      clearElement(legendBox);
-      summaryBox.textContent = "";
-      var firstMessage = data.errors.length > 0 ? data.errors[0].message : "";
-      showStageMessage(firstMessage);
-      return;
+  function renderSummary() {
+    summaryBox.textContent = (linearData && linearData.summary) || "";
+    if (currentView === "structure" && structureData && structureData.ok) {
+      structureSummary.textContent = structureData.summary || "";
+      structureDetail.textContent = structureData.detail || "";
+    } else {
+      structureSummary.textContent = "";
+      structureDetail.textContent = "";
     }
+    structureBar.hidden = currentView !== "structure";
+  }
 
-    stageBox.innerHTML = data.svg;
-    summaryBox.textContent = data.summary;
-    buildLegend(data.legend);
+  function renderProblems() {
+    if (currentView === "structure") {
+      showProblems(structureData);
+    } else {
+      showProblems(linearData);
+    }
+  }
+
+  function renderStage() {
+    clearElement(stageBox);
+    clearElement(legendBox);
+
+    if (currentView === "linear") {
+      if (linearData && linearData.ok) {
+        stageBox.innerHTML = linearData.svg;
+        buildLegend(linearData.legend);
+      } else if (linearData) {
+        var linearErrors = linearData.errors || [];
+        var linearWarnings = linearData.warnings || [];
+        var linearMessage = linearErrors.length ? linearErrors[0].message :
+          (linearWarnings.length ? linearWarnings[0].message :
+            "Could not draw this sequence.");
+        showStageMessage(linearMessage);
+      } else {
+        var hint = document.createElement("p");
+        hint.className = "hint";
+        hint.textContent = "Paste an IDT sequence, for example /5Biosg/TTTTTT*GGGGGG/3Bio/";
+        stageBox.appendChild(hint);
+      }
+    } else if (structureLoading) {
+      showStageMessage("Consulting IDT OligoAnalyzer…");
+    } else if (!structureData) {
+      showStageMessage("Click Predict structure to fold this sequence with IDT.");
+    } else if (structureData.ok) {
+      stageBox.innerHTML = structureData.svg;
+      buildLegend(structureData.legend);
+    } else {
+      var structureErrors = structureData.errors || [];
+      var structureWarnings = structureData.warnings || [];
+      var structureMessage = structureErrors.length ? structureErrors[0].message :
+        (structureWarnings.length ? structureWarnings[0].message :
+          "IDT prediction failed.");
+      showStageMessage(structureMessage);
+    }
     applyZoom();
+  }
+
+  function renderAll() {
+    renderSummary();
+    renderProblems();
+    renderStage();
+  }
+
+  function setView(view) {
+    currentView = view;
+    var structureActive = view === "structure";
+    viewLinear.classList.toggle("active", !structureActive);
+    viewLinear.setAttribute("aria-pressed", String(!structureActive));
+    viewStructure.classList.toggle("active", structureActive);
+    viewStructure.setAttribute("aria-pressed", String(structureActive));
+    renderAll();
+  }
+
+  function setStructureLoading(value) {
+    structureLoading = value;
+    predictButton.disabled = value;
+  }
+
+  function invalidateStructure() {
+    structureRequestId += 1;
+    setStructureLoading(false);
+    structureData = null;
+    structureForRaw = "";
+  }
+
+  function updateIdtBar() {
+    if (signedIn) {
+      idtStatus.textContent = "Signed in to IDT";
+      idtSignIn.hidden = true;
+      idtSignOut.hidden = false;
+      idtForm.hidden = true;
+    } else {
+      idtStatus.textContent = "Not signed in to IDT";
+      idtSignIn.hidden = false;
+      idtSignOut.hidden = true;
+    }
+  }
+
+  function showIdtForm(predictAfter) {
+    pendingPredict = predictAfter;
+    idtForm.hidden = false;
+    idtFormError.textContent = "";
+    idtUser.focus();
+  }
+
+  function loadIdtStatus() {
+    fetch("/api/idt/status")
+      .then(function (response) {
+        return response.json();
+      })
+      .then(function (data) {
+        signedIn = !!(data && data.signed_in);
+        updateIdtBar();
+      })
+      .catch(function () {
+        // The Predict button surfaces a local-server error if needed.
+      });
   }
 
   function showOffline() {
@@ -251,6 +457,10 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
     clearElement(legendBox);
     clearElement(problemsBox);
     summaryBox.textContent = "";
+    linearData = null;
+    invalidateStructure();
+    structureSummary.textContent = "";
+    structureDetail.textContent = "";
     var row = document.createElement("div");
     row.className = "problem error";
     row.textContent = `Cannot reach the viewer's server. Start "Start Oligo Viewer.bat" and reload.`;
@@ -258,19 +468,101 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
   }
 
   function requestRender(raw) {
+    var requestId = ++linearRequestId;
     if (raw.trim() === "") {
-      showHint();
+      invalidateStructure();
+      linearData = null;
+      setView("linear");
+      renderAll();
       return;
     }
     fetch("/api/render?seq=" + encodeURIComponent(raw))
       .then(function (response) {
         return response.json();
       })
-      .then(showPayload)
-      .catch(showOffline);
+      .then(function (data) {
+        if (requestId !== linearRequestId) {
+          return;
+        }
+        linearData = data;
+        renderAll();
+      })
+      .catch(function () {
+        if (requestId === linearRequestId) {
+          showOffline();
+        }
+      });
+  }
+
+  function requestStructure(raw) {
+    if (raw.trim() === "") {
+      return;
+    }
+    if (!signedIn) {
+      showIdtForm(true);
+      return;
+    }
+
+    var requestId = ++structureRequestId;
+    setStructureLoading(true);
+    structureData = null;
+    structureForRaw = "";
+    setView("structure");
+
+    fetch("/api/structure?seq=" + encodeURIComponent(raw))
+      .then(function (response) {
+        return response.json();
+      })
+      .then(function (data) {
+        if (!data || typeof data !== "object") {
+          throw new Error("invalid response");
+        }
+        if (requestId !== structureRequestId || seqBox.value !== raw) {
+          return;
+        }
+        setStructureLoading(false);
+        structureData = data;
+        structureForRaw = raw;
+        if (data.signed_in === false) {
+          signedIn = false;
+          updateIdtBar();
+          showIdtForm(false);
+        }
+        renderAll();
+      })
+      .catch(function () {
+        if (requestId !== structureRequestId || seqBox.value !== raw) {
+          return;
+        }
+        setStructureLoading(false);
+        structureForRaw = raw;
+        structureData = {
+          ok: false,
+          svg: "",
+          summary: "",
+          detail: "",
+          legend: [],
+          warnings: [],
+          errors: [{
+            message: "Cannot reach the viewer's server.",
+            position: 0,
+            token: ""
+          }],
+          structure: null,
+          signed_in: signedIn,
+          login_required: false
+        };
+        renderAll();
+      });
   }
 
   seqBox.addEventListener("input", function () {
+    // Invalidate both responses immediately: a click on Predict can arrive
+    // before the 120 ms linear-render debounce fires, and an older linear
+    // response must not overwrite the new sequence summary.
+    linearRequestId += 1;
+    invalidateStructure();
+    renderAll();
     if (debounceTimer !== null) {
       clearTimeout(debounceTimer);
     }
@@ -280,12 +572,90 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
     }, debounceMs);
   });
 
+  idtSignIn.addEventListener("click", function () {
+    showIdtForm(false);
+  });
+
+  idtForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var username = idtUser.value;
+    var password = idtPass.value;
+    idtPass.value = "";
+    idtFormError.textContent = "";
+    idtSubmit.disabled = true;
+
+    fetch("/api/idt/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: username, password: password })
+    })
+      .then(function (response) {
+        return response.json();
+      })
+      .then(function (data) {
+        if (data && data.ok) {
+          signedIn = true;
+          updateIdtBar();
+          idtFormError.textContent = "";
+          var shouldPredict = pendingPredict;
+          pendingPredict = false;
+          if (shouldPredict) {
+            requestStructure(seqBox.value);
+          }
+        } else {
+          idtFormError.textContent = (data && data.error) || "IDT sign-in failed.";
+        }
+      })
+      .catch(function () {
+        idtFormError.textContent = "Cannot reach the viewer's server.";
+      })
+      .finally(function () {
+        idtSubmit.disabled = false;
+      });
+  });
+
+  idtSignOut.addEventListener("click", function () {
+    fetch("/api/idt/logout", { method: "POST" })
+      .catch(function () {
+        // Local state still clears; the next prediction asks for sign-in.
+      })
+      .finally(function () {
+        signedIn = false;
+        pendingPredict = false;
+        invalidateStructure();
+        setView("linear");
+        updateIdtBar();
+        idtFormError.textContent = "";
+      });
+  });
+
+  viewLinear.addEventListener("click", function () {
+    setView("linear");
+  });
+
+  viewStructure.addEventListener("click", function () {
+    if (structureLoading) {
+      return;
+    }
+    if (structureData && structureForRaw === seqBox.value) {
+      setView("structure");
+    } else {
+      requestStructure(seqBox.value);
+    }
+  });
+
+  predictButton.addEventListener("click", function () {
+    requestStructure(seqBox.value);
+  });
+
   zoomInput.addEventListener("input", applyZoom);
   fitButton.addEventListener("click", fitToWindow);
 
   seqBox.value = "/5Biosg/TTTTTT*GGGGGG/3Bio/";
+  updateIdtBar();
   applyZoom();
   requestRender(seqBox.value);
+  loadIdtStatus();
 })();
 </script>
 </body>
