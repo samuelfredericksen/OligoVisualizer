@@ -74,8 +74,8 @@ _Avoid_: Diagram, graphic, chart
 The coloured circle standing for one nucleotide.
 
 **Sugar icon**:
-The mini pentose ring drawn below a tile, labelled `OH`, `OMe`, `F`, `LNA` or `MOE`; absent for
-DNA, where the sugar is unmodified 2'-deoxyribose.
+The mini pentose ring drawn beside a structure base or below a linear tile, labelled `OH`, `OMe`,
+`F`, `LNA` or `MOE`; absent for DNA, where the sugar is unmodified 2'-deoxyribose.
 _Avoid_: Sugar glyph, corner letter
 
 **Tag**:
@@ -89,9 +89,44 @@ _Avoid_: Badge, chip, sticker
 A fold in which a single chain doubles back on itself: two antiparallel stem arms closed by a
 loop. Distinct from a self-dimer, which involves two separate chains.
 
+**Self-dimer**:
+Two copies of the same oligonucleotide base-pairing with each other; IDT calls this a
+homo-dimer. The tool shows the candidate with the lowest ΔG. Distinct from a hetero-dimer,
+which involves two different sequences.
+_Avoid_: Primer-dimer (may be hetero-dimer)
+
+**Most likely homodimer**:
+The IDT self-dimer candidate with the most negative ΔG under the stated Na⁺, Mg²⁺, oligo and
+dNTP concentrations. The tool draws only this candidate.
+
+**Oligo concentration**:
+The strand concentration in µM used by the self-dimer calculation. It does not affect the
+hairpin fold. IDT's qPCR default is 0.2 µM.
+
+**dNTP concentration**:
+The deoxynucleoside triphosphate concentration in mM used by the self-dimer calculation. It does
+not affect the hairpin fold. IDT's qPCR default is 0.8 mM.
+
 **Base-pair map**:
 The list of which nucleotide positions pair with which, as predicted for one fold. It is not a
 chemical drawing and does not show modification tags.
+
+**Watson–Crick pair**:
+A pair through the Watson–Crick edges: A–T, A–U or G–C. Drawn as a solid blue line.
+
+**Wobble pair**:
+A G·U (RNA) or G·T (DNA) pair through the Watson–Crick edges but with the bases displaced. Drawn
+as a long-dashed teal line. It is a recognized non-Watson–Crick pair, not a generic mismatch.
+
+**Noncanonical pair**:
+A pair with a base identity other than Watson–Crick or G·U/G·T, such as G·A or A·C. Drawn as a
+dotted amber line when IDT returns it. The drawing does not infer Hoogsteen or sugar-edge
+geometry from the sequence alone.
+
+**Hoogsteen edge / sugar edge**:
+The other two base edges used in non-Watson–Crick pairing. Their geometry cannot be determined
+from a two-dimensional base-pair map without structural data, so the tool does not use those
+names for its line classes.
 
 **Gibbs free energy (ΔG)**:
 The predicted folding free energy in kcal/mol. More negative means a more favourable fold under
@@ -99,7 +134,19 @@ the stated conditions. The tool shows IDT's value; it never recomputes it.
 
 **Melting temperature (Tm)**:
 The temperature at which half the predicted structure is unfolded, in °C, as reported by IDT for
-the chosen fold.
+the chosen fold. The Analyzer property strip reports a separate oligo Tm from IDT's Analyze
+endpoint; it is not the same as the chosen hairpin's Tm.
+
+**Molecular weight**:
+The oligo's calculated mass in g/mol, including its modifications, as reported by IDT.
+
+**Extinction coefficient**:
+The calculated A260 extinction coefficient in L/(mol·cm), including modifications, as reported
+by IDT.
+
+**OD260**:
+One unit of absorbance at 260 nm in a 1 cm path. IDT reports how much oligo gives one OD260:
+nmol/OD260 and µg/OD260.
 
 **Lowest-ΔG fold**:
 The structure with the most negative ΔG among all structures IDT returns, regardless of whether
@@ -112,6 +159,7 @@ value returns more candidate folds; it does not change which returned fold is se
 **Secondary-structure drawing**:
 The view of the chosen fold: a stem-loop for one continuous hairpin, or a connected stem-loop
 tree when the fold has several stems or a multiloop. A base-pair arc diagram is only a fallback.
+2' sugar rings mark modified positions; `/Code/` modification tags remain in the linear view.
 
 ## The second meaning of "thiolated"
 

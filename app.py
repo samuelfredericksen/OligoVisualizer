@@ -1,12 +1,16 @@
-"""Local web server for OligoVisualizer 2.0: linear and IDT hairpin views."""
+"""Local web server for OligoVisualizer 2.1: linear and IDT structure views."""
 
+import math
 import socket
 import threading
 import webbrowser
+from collections.abc import Mapping
 
 from flask import Flask, jsonify, request
 
 from idt import (
+    DEFAULT_CONDITIONS,
+    FoldConditions,
     IdtAuthError,
     IdtError,
     IdtSession,
@@ -16,6 +20,7 @@ from idt import (
 from notation import normalize, parse, summary_line
 from render import (
     legend_items,
+    render_homodimer_svg,
     render_structure_svg,
     render_svg,
     structure_legend_items,
@@ -27,8 +32,113 @@ STRUCTURE_CACHE_LIMIT = 64
 # IDT Analyzer's default mode is DNA, even when the sequence contains U.
 STRUCTURE_NUCLEOTIDE_TYPE = "DNA"
 _session = IdtSession()
-_structure_cache: dict[tuple[str, str], dict] = {}
+_structure_cache: dict[tuple[str, str, FoldConditions], dict] = {}
 _structure_lock = threading.Lock()
+
+_CONDITION_SPECS = (
+    {
+        "query": "temp",
+        "field": "temperature_c",
+        "display": "Temperature",
+        "minimum": 0,
+        "maximum": 100,
+        "kind": "float",
+        "suffix": " °C",
+    },
+    {
+        "query": "na",
+        "field": "sodium_mm",
+        "display": "Na⁺",
+        "minimum": 0,
+        "maximum": 1500,
+        "kind": "float",
+        "suffix": " mM",
+    },
+    {
+        "query": "mg",
+        "field": "magnesium_mm",
+        "display": "Mg²⁺",
+        "minimum": 0,
+        "maximum": 600,
+        "kind": "float",
+        "suffix": " mM",
+    },
+    {
+        "query": "suboptimality",
+        "field": "suboptimality_percent",
+        "display": "Suboptimality",
+        "minimum": 0,
+        "maximum": 100,
+        "kind": "float",
+        "suffix": "%",
+    },
+    {
+        "query": "max_foldings",
+        "field": "max_foldings",
+        "display": "Maximum foldings",
+        "minimum": 1,
+        "maximum": 100,
+        "kind": "int",
+        "suffix": "",
+    },
+    {
+        "query": "oligo",
+        "field": "oligo_conc_um",
+        "display": "Oligo concentration",
+        "minimum": 0.0001,
+        "maximum": 10000,
+        "kind": "float",
+        "suffix": " µM",
+    },
+    {
+        "query": "dntps",
+        "field": "dntps_mm",
+        "display": "dNTP concentration",
+        "minimum": 0,
+        "maximum": 1000,
+        "kind": "float",
+        "suffix": " mM",
+    },
+)
+
+
+def _condition_problem(spec: dict) -> dict:
+    whole = "whole " if spec["kind"] == "int" else ""
+    return {
+        "message": (
+            f"{spec['display']} must be a {whole}number between "
+            f"{spec['minimum']:g} and {spec['maximum']:g}{spec['suffix']}."
+        ),
+        "position": 0,
+        "token": "",
+    }
+
+
+def _parse_conditions(
+    query: Mapping[str, str],
+) -> tuple[FoldConditions | None, dict | None]:
+    """Validate the folding and self-dimer inputs; missing values use defaults."""
+    values: dict[str, float | int] = {}
+    for spec in _CONDITION_SPECS:
+        raw = query.get(spec["query"])
+        if raw is None:
+            values[spec["field"]] = getattr(DEFAULT_CONDITIONS, spec["field"])
+            continue
+        try:
+            number = float(raw)
+        except (TypeError, ValueError):
+            return None, _condition_problem(spec)
+        if not math.isfinite(number):
+            return None, _condition_problem(spec)
+        if number < spec["minimum"] or number > spec["maximum"]:
+            return None, _condition_problem(spec)
+        if spec["kind"] == "int":
+            if not number.is_integer():
+                return None, _condition_problem(spec)
+            values[spec["field"]] = int(number)
+        else:
+            values[spec["field"]] = number
+    return FoldConditions(**values), None
 
 
 def _problem_json(problem) -> dict:
@@ -102,12 +212,14 @@ def _structure_error(
             else errors
         ),
         "structure": None,
+        "homodimer": None,
+        "properties": None,
         "signed_in": signed_in,
         "login_required": login_required,
     }
 
 
-def build_structure_payload(raw: str) -> dict:
+def build_structure_payload(raw: str, query=None) -> dict:
     """Fold one raw IDT string with the signed-in Analyzer and draw it."""
     if raw == "":
         return _structure_error("no sequence supplied")
@@ -126,6 +238,17 @@ def build_structure_payload(raw: str) -> dict:
             errors=parse_errors,
         )
 
+    conditions, condition_problem = _parse_conditions(query or {})
+    if condition_problem is not None:
+        return _structure_error(
+            condition_problem["message"],
+            signed_in=_session.signed_in,
+            login_required=False,
+            warnings=parse_warnings,
+            errors=parse_errors + [condition_problem],
+        )
+    assert conditions is not None
+
     requested_type = STRUCTURE_NUCLEOTIDE_TYPE
     if not _session.signed_in:
         return _structure_error(
@@ -143,15 +266,94 @@ def build_structure_payload(raw: str) -> dict:
             ],
         )
 
-    key = (normalize(raw), requested_type)
+    key = (normalize(raw), requested_type, conditions)
     with _structure_lock:
         cached = _structure_cache.get(key)
     if cached is not None:
         return cached
 
+    sugar_warning: dict | None = None
+    properties = None
+    properties_warning: dict | None = None
+    homodimer = None
+    homodimer_svg = ""
+    homodimer_warning: dict | None = None
     try:
-        fold = _session.predict(raw, requested_type)
-        svg, layout = render_structure_svg(fold.bases, fold.pairs)
+        fold = _session.predict(raw, requested_type, conditions)
+        sugars = tuple(nt.sugar for nt in seq.nucleotides)
+        if len(sugars) != len(fold.bases):
+            sugars = ()
+            sugar_warning = {
+                "message": (
+                    "IDT returned a different number of bases than the parsed "
+                    "sequence; 2' modification icons are hidden."
+                ),
+                "position": 0,
+                "token": "",
+            }
+        svg, layout = render_structure_svg(fold.bases, fold.pairs, sugars)
+
+        try:
+            properties = _session.analyze_properties(
+                raw, requested_type, conditions
+            )
+        except (IdtAuthError, IdtSessionExpired):
+            raise
+        except IdtError as exc:
+            properties_warning = {
+                "message": f"IDT property analysis failed: {exc}",
+                "position": exc.position,
+                "token": exc.token,
+            }
+        except Exception as exc:
+            properties_warning = {
+                "message": f"IDT property analysis failed: {exc}",
+                "position": 0,
+                "token": "",
+            }
+
+        try:
+            homodimer = _session.predict_homodimer(
+                raw, requested_type, conditions
+            )
+            dimer_sugars = sugars
+            if len(dimer_sugars) != len(homodimer.sequence):
+                dimer_sugars = ()
+                homodimer_warning = {
+                    "message": (
+                        "IDT returned a different self-dimer sequence length "
+                        "than the parsed sequence; 2' modification icons are "
+                        "hidden on the homodimer."
+                    ),
+                    "position": 0,
+                    "token": "",
+                }
+            homodimer_svg = render_homodimer_svg(
+                homodimer.sequence, homodimer.dimer, dimer_sugars
+            )
+        except (IdtAuthError, IdtSessionExpired):
+            raise
+        except NoStructureError as exc:
+            homodimer = None
+            homodimer_warning = {
+                "message": str(exc),
+                "position": 0,
+                "token": "",
+            }
+        except IdtError as exc:
+            homodimer = None
+            homodimer_warning = {
+                "message": f"IDT self-dimer analysis failed: {exc}",
+                "position": exc.position,
+                "token": exc.token,
+            }
+        except Exception as exc:
+            homodimer = None
+            homodimer_warning = {
+                "message": f"IDT self-dimer analysis failed: {exc}",
+                "position": 0,
+                "token": "",
+            }
     except IdtAuthError as exc:
         return _structure_error(
             str(exc),
@@ -239,6 +441,67 @@ def build_structure_payload(raw: str) -> dict:
     elif layout == "tree":
         detail += " · branched fold drawn as connected stem-loops"
 
+    properties_payload = None
+    if properties is not None:
+        properties_payload = {
+            "melt_temp_c": properties.melt_temp_c,
+            "molecular_weight_g_mol": properties.molecular_weight_g_mol,
+            "extinction_coefficient_l_mol_cm": (
+                properties.extinction_coefficient_l_mol_cm
+            ),
+            "nmol_per_od260": properties.nmol_per_od260,
+            "ug_per_od260": properties.ug_per_od260,
+        }
+
+    homodimer_payload = None
+    if homodimer is not None:
+        dimer_summary = (
+            f"ΔG {homodimer.delta_g:+.2f} kcal/mol · "
+            f"{homodimer.base_pairs} base pairs · most likely homodimer"
+        )
+        dimer_detail = (
+            f"IDT OligoAnalyzer self-dimer · 2 × "
+            f"{len(homodimer.sequence)} nt · {homodimer.result_count} "
+            f"candidate{'s' if homodimer.result_count != 1 else ''} · "
+            f"{homodimer.base_pairs} counted base pairs"
+        )
+        if homodimer.additional_pairs:
+            dimer_detail += f" · {homodimer.additional_pairs} additional"
+        if homodimer.max_delta_g is not None:
+            dimer_detail += (
+                f" · perfect-complement ΔG "
+                f"{homodimer.max_delta_g:+.2f} kcal/mol"
+            )
+        dimer_detail += (
+            f" · {conditions.oligo_conc_um:g} µM oligo · "
+            f"{conditions.dntps_mm:g} mM dNTPs · "
+            f"{conditions.sodium_mm:g} mM Na⁺ · "
+            f"{conditions.magnesium_mm:g} mM Mg²⁺"
+        )
+        homodimer_payload = {
+            "ok": True,
+            "svg": homodimer_svg,
+            "summary": dimer_summary,
+            "detail": dimer_detail,
+            "delta_g_kcal_mol": homodimer.delta_g,
+            "base_pairs": homodimer.base_pairs,
+            "additional_pairs": homodimer.additional_pairs,
+            "result_count": homodimer.result_count,
+            "perfect_delta_g_kcal_mol": homodimer.max_delta_g,
+            "sequence": homodimer.sequence,
+            "layout": "homodimer",
+        }
+
+    legend = structure_legend_items(fold.bases, sugars)
+    if homodimer is not None and homodimer.additional_pairs:
+        legend.append(
+            {
+                "kind": "pair",
+                "label": "Additional, not counted",
+                "style": "additional",
+            }
+        )
+
     warnings = list(parse_warnings)
     if fold.delta_g >= 0:
         warnings.append(
@@ -251,13 +514,19 @@ def build_structure_payload(raw: str) -> dict:
                 "token": "",
             }
         )
+    if sugar_warning is not None:
+        warnings.append(sugar_warning)
+    if properties_warning is not None:
+        warnings.append(properties_warning)
+    if homodimer_warning is not None:
+        warnings.append(homodimer_warning)
 
     payload = {
         "ok": True,
         "svg": svg,
         "summary": summary,
         "detail": detail,
-        "legend": structure_legend_items(fold.bases),
+        "legend": legend,
         "warnings": warnings,
         "errors": parse_errors,
         "structure": {
@@ -276,6 +545,8 @@ def build_structure_payload(raw: str) -> dict:
             "base_pairs": [[i, j] for i, j in fold.pairs],
             "layout": layout,
         },
+        "homodimer": homodimer_payload,
+        "properties": properties_payload,
         "signed_in": True,
         "login_required": False,
     }
@@ -349,7 +620,9 @@ def api_idt_logout():
 @app.get("/api/structure")
 def api_structure():
     """Fold one pasted sequence with IDT; always HTTP 200."""
-    return _no_store(build_structure_payload(request.args.get("seq", "")))
+    return _no_store(
+        build_structure_payload(request.args.get("seq", ""), request.args)
+    )
 
 
 def main() -> None:

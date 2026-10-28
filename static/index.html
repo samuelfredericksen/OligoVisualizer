@@ -74,7 +74,7 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
 }
 #idtform p.note { margin: 0; color: #6B6B6B; font-size: 12px; }
 #idtformerror { min-height: 1.2em; }
-#idtform[hidden], #structurebar[hidden] { display: none; }
+#idtform[hidden], #structurebar[hidden], #homodimerpanel[hidden] { display: none; }
 #views {
   display: flex;
   flex-wrap: wrap;
@@ -88,9 +88,57 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
   border-color: #0072B2;
 }
 #predict { margin-left: auto; }
+#conditions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+.conditions-title { font-weight: 600; color: #1A1A1A; }
+#conditions label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #6B6B6B;
+}
+#conditions input {
+  width: 72px;
+  padding: 5px 7px;
+  font: inherit;
+  color: #1A1A1A;
+  background: #FFFFFF;
+  border: 1px solid #C8C8C8;
+  border-radius: 5px;
+}
+#properties { margin: 8px 0 0; font-size: 13px; }
+#properties[hidden] { display: none; }
+.properties-title { margin-bottom: 4px; font-weight: 600; }
+#propertygrid { display: flex; flex-wrap: wrap; gap: 8px; }
+.property {
+  min-width: 150px;
+  padding: 6px 10px;
+  border: 1px solid #E2E2E2;
+  border-radius: 6px;
+  background: #FAFAFA;
+}
+.property-label { display: block; color: #6B6B6B; font-size: 11px; }
+.property-value {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.property-unit { color: #6B6B6B; font-size: 11px; font-weight: 400; }
 #structurebar { margin: 8px 0 0; font-size: 13px; }
-#structuresummary { font-weight: 600; }
-#structuredetail { margin-top: 2px; color: #6B6B6B; font-size: 12px; }
+.structure-heading { margin-bottom: 3px; font-size: 13px; font-weight: 700; }
+#structuresummary, #homodimersummary { font-weight: 600; }
+#structuredetail, #homodimerdetail {
+  margin-top: 2px;
+  color: #6B6B6B;
+  font-size: 12px;
+}
 #scroll {
   margin: 12px 0 0;
   border: 1px solid #E2E2E2;
@@ -102,16 +150,28 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
 }
 #stagewrap { display: inline-block; min-width: 100%; }
 #stage { padding: 12px; min-width: max-content; }
-#stage svg { display: block; }
+#stage svg, #homodimerstage svg { display: block; }
+#homodimerpanel {
+  padding: 12px;
+  border-top: 1px solid #E2E2E2;
+  min-width: max-content;
+}
+#homodimerbar { margin-bottom: 8px; font-size: 13px; }
+#homodimerstage { min-width: max-content; }
 .hint { margin: 24px 6px; color: #6B6B6B; font-size: 14px; }
 .stage-message { margin: 24px auto; text-align: center; color: #6B6B6B; font-size: 14px; }
 #legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 16px 0 0; }
 .legend-item { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 56px; }
 .legend-sample { display: flex; align-items: center; justify-content: center; }
 .legend-base { width: 24px; height: 24px; border-radius: 50%; font-size: 13px; font-weight: 700; }
-.legend-sugar { width: 44px; height: 30px; border: none; font-size: 0; }
+.legend-sugar { width: 50px; height: 34px; border: none; font-size: 0; }
 .legend-link { width: 40px; height: 2px; background: #6B6B6B; }
 .legend-link-ps { height: 4px; background: #B00020; }
+.legend-pair { width: 40px; height: 0; border-top: 2px solid #0072B2; }
+.legend-pair.wobble { border-top-style: dashed; border-color: #009E73; }
+.legend-pair.noncanonical { border-top-style: dotted; border-color: #B58900; }
+.legend-pair.unknown { border-top-style: dotted; border-color: #7F7F7F; }
+.legend-pair.additional { opacity: 0.45; border-top-width: 1.4px; }
 .legend-tag {
   padding: 2px 5px;
   color: #1A1A1A;
@@ -162,13 +222,42 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
     <button type="button" class="tab" id="view-structure" aria-pressed="false">Secondary structure</button>
     <button type="button" id="predict">Predict structure</button>
   </div>
+  <div id="conditions" aria-label="IDT folding conditions">
+    <span class="conditions-title">IDT conditions</span>
+    <label>Temperature <input id="cond-temp" type="number" min="0" max="100" step="0.1" value="25"> °C</label>
+    <label>Na⁺ <input id="cond-na" type="number" min="0" max="1500" step="1" value="50"> mM</label>
+    <label>Mg²⁺ <input id="cond-mg" type="number" min="0" max="600" step="0.1" value="3"> mM</label>
+    <label>Oligo <input id="cond-oligo" type="number" min="0.0001" max="10000" step="0.01" value="0.2"> µM</label>
+    <label>dNTPs <input id="cond-dntps" type="number" min="0" max="1000" step="0.01" value="0.8"> mM</label>
+    <label>Suboptimality <input id="cond-suboptimality" type="number" min="0" max="100" step="1" value="50"> %</label>
+    <label>Max foldings <input id="cond-max-foldings" type="number" min="1" max="100" step="1" value="20"></label>
+  </div>
+  <div id="properties" hidden aria-label="OligoAnalyzer properties">
+    <div class="properties-title">OligoAnalyzer properties</div>
+    <div id="propertygrid">
+      <div class="property"><span class="property-label">Tm (Analyzer)</span><span class="property-value"><span id="prop-tm"></span><span class="property-unit"> °C</span></span></div>
+      <div class="property"><span class="property-label">Molecular weight</span><span class="property-value"><span id="prop-mw"></span><span class="property-unit"> g/mol</span></span></div>
+      <div class="property"><span class="property-label">Extinction coefficient</span><span class="property-value"><span id="prop-ext"></span><span class="property-unit"> L/(mol·cm)</span></span></div>
+      <div class="property"><span class="property-label">nmol/OD260</span><span class="property-value" id="prop-nmol"></span></div>
+      <div class="property"><span class="property-label">µg/OD260</span><span class="property-value" id="prop-ug"></span></div>
+    </div>
+  </div>
   <div id="structurebar" hidden>
+    <div class="structure-heading">Hairpin (intramolecular)</div>
     <div id="structuresummary"></div>
     <div id="structuredetail"></div>
   </div>
   <div id="scroll">
     <div id="stagewrap">
       <div id="stage"></div>
+      <div id="homodimerpanel" hidden>
+        <div id="homodimerbar">
+          <div class="structure-heading">Homodimer (self-dimer)</div>
+          <div id="homodimersummary"></div>
+          <div id="homodimerdetail"></div>
+        </div>
+        <div id="homodimerstage"></div>
+      </div>
     </div>
   </div>
   <div id="legend"></div>
@@ -211,6 +300,23 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
   var structureBar = document.getElementById("structurebar");
   var structureSummary = document.getElementById("structuresummary");
   var structureDetail = document.getElementById("structuredetail");
+  var homodimerPanel = document.getElementById("homodimerpanel");
+  var homodimerSummary = document.getElementById("homodimersummary");
+  var homodimerDetail = document.getElementById("homodimerdetail");
+  var homodimerStage = document.getElementById("homodimerstage");
+  var condTemp = document.getElementById("cond-temp");
+  var condNa = document.getElementById("cond-na");
+  var condMg = document.getElementById("cond-mg");
+  var condOligo = document.getElementById("cond-oligo");
+  var condDntps = document.getElementById("cond-dntps");
+  var condSuboptimality = document.getElementById("cond-suboptimality");
+  var condMaxFoldings = document.getElementById("cond-max-foldings");
+  var propertiesPanel = document.getElementById("properties");
+  var propTm = document.getElementById("prop-tm");
+  var propMw = document.getElementById("prop-mw");
+  var propExt = document.getElementById("prop-ext");
+  var propNmol = document.getElementById("prop-nmol");
+  var propUg = document.getElementById("prop-ug");
 
   var debounceMs = 120;
   var debounceTimer = null;
@@ -218,6 +324,7 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
   var linearData = null;
   var structureData = null;
   var structureForRaw = "";
+  var structureForConditions = "";
   var currentView = "linear";
   var signedIn = false;
   var structureLoading = false;
@@ -232,24 +339,39 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
 
   function applyZoom() {
     var scale = Number(zoomInput.value) / 100;
-    var svg = stageBox.querySelector("svg");
-    if (!svg) {
+    var svgs = stageBox.querySelectorAll("svg");
+    var dimerSvgs = homodimerStage.querySelectorAll("svg");
+    var all = [];
+    var index;
+    for (index = 0; index < svgs.length; index += 1) {
+      all.push(svgs[index]);
+    }
+    for (index = 0; index < dimerSvgs.length; index += 1) {
+      all.push(dimerSvgs[index]);
+    }
+    if (!all.length) {
       zoomReadout.textContent = "×" + scale.toFixed(2);
       return;
     }
-    var width = parseFloat(svg.getAttribute("width")) || 0;
-    var height = parseFloat(svg.getAttribute("height")) || 0;
-    svg.style.width = width ? (width * scale) + "px" : "";
-    svg.style.height = height ? (height * scale) + "px" : "";
-    svg.style.maxWidth = "none";
+    all.forEach(function (svg) {
+      var width = parseFloat(svg.getAttribute("width")) || 0;
+      var height = parseFloat(svg.getAttribute("height")) || 0;
+      svg.style.width = width ? (width * scale) + "px" : "";
+      svg.style.height = height ? (height * scale) + "px" : "";
+      svg.style.maxWidth = "none";
+    });
     zoomReadout.textContent = "×" + scale.toFixed(2);
   }
 
   function fitToWindow() {
-    if (!stageBox.querySelector("svg")) {
+    if (!stageBox.querySelector("svg") &&
+        !homodimerStage.querySelector("svg")) {
       return;
     }
-    var contentWidth = stageBox.offsetWidth;
+    var contentWidth = stageBox.scrollWidth;
+    if (currentView === "structure" && !homodimerPanel.hidden) {
+      contentWidth = Math.max(contentWidth, homodimerStage.scrollWidth);
+    }
     if (!contentWidth) {
       return;
     }
@@ -282,11 +404,15 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
     });
   }
 
-  function showStageMessage(text) {
+  function showMessage(target, text) {
     var message = document.createElement("p");
     message.className = "stage-message";
     message.textContent = text;
-    stageBox.appendChild(message);
+    target.appendChild(message);
+  }
+
+  function showStageMessage(text) {
+    showMessage(stageBox, text);
   }
 
   function buildLegend(entries) {
@@ -319,6 +445,10 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
           sample.className = "legend-sample legend-link legend-link-ps";
         }
         caption.textContent = entry.label;
+      } else if (entry.kind === "pair") {
+        sample.className = "legend-sample legend-pair " +
+          (entry.style || "wc");
+        caption.textContent = entry.label;
       } else if (entry.kind === "tag") {
         sample.className = "legend-sample legend-tag";
         sample.textContent = entry.label;
@@ -336,11 +466,53 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
     if (currentView === "structure" && structureData && structureData.ok) {
       structureSummary.textContent = structureData.summary || "";
       structureDetail.textContent = structureData.detail || "";
+      var dimer = structureData.homodimer;
+      if (dimer && dimer.ok) {
+        homodimerSummary.textContent = dimer.summary || "";
+        homodimerDetail.textContent = dimer.detail || "";
+      } else {
+        homodimerSummary.textContent = "";
+        homodimerDetail.textContent = "";
+      }
     } else {
       structureSummary.textContent = "";
       structureDetail.textContent = "";
+      homodimerSummary.textContent = "";
+      homodimerDetail.textContent = "";
     }
     structureBar.hidden = currentView !== "structure";
+  }
+
+  function formatProperty(value, digits) {
+    if (typeof value !== "number" || !isFinite(value)) {
+      return "—";
+    }
+    return value.toLocaleString("en-US", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits
+    });
+  }
+
+  function renderProperties() {
+    var properties = structureData && structureData.ok ?
+      structureData.properties : null;
+    if (!properties) {
+      propertiesPanel.hidden = true;
+      propTm.textContent = "";
+      propMw.textContent = "";
+      propExt.textContent = "";
+      propNmol.textContent = "";
+      propUg.textContent = "";
+      return;
+    }
+    propTm.textContent = formatProperty(properties.melt_temp_c, 1);
+    propMw.textContent = formatProperty(properties.molecular_weight_g_mol, 1);
+    propExt.textContent = formatProperty(
+      properties.extinction_coefficient_l_mol_cm, 0
+    );
+    propNmol.textContent = formatProperty(properties.nmol_per_od260, 2);
+    propUg.textContent = formatProperty(properties.ug_per_od260, 2);
+    propertiesPanel.hidden = false;
   }
 
   function renderProblems() {
@@ -353,7 +525,9 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
 
   function renderStage() {
     clearElement(stageBox);
+    clearElement(homodimerStage);
     clearElement(legendBox);
+    homodimerPanel.hidden = true;
 
     if (currentView === "linear") {
       if (linearData && linearData.ok) {
@@ -373,11 +547,21 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
         stageBox.appendChild(hint);
       }
     } else if (structureLoading) {
-      showStageMessage("Consulting IDT OligoAnalyzer…");
+      showStageMessage("Consulting IDT OligoAnalyzer (hairpin + self-dimer)…");
     } else if (!structureData) {
       showStageMessage("Click Predict structure to fold this sequence with IDT.");
     } else if (structureData.ok) {
       stageBox.innerHTML = structureData.svg;
+      var dimer = structureData.homodimer;
+      if (dimer && dimer.ok && dimer.svg) {
+        homodimerStage.innerHTML = dimer.svg;
+      } else {
+        showMessage(
+          homodimerStage,
+          (dimer && dimer.message) || "No self-dimer result returned."
+        );
+      }
+      homodimerPanel.hidden = false;
       buildLegend(structureData.legend);
     } else {
       var structureErrors = structureData.errors || [];
@@ -392,6 +576,7 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
 
   function renderAll() {
     renderSummary();
+    renderProperties();
     renderProblems();
     renderStage();
   }
@@ -416,6 +601,29 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
     setStructureLoading(false);
     structureData = null;
     structureForRaw = "";
+    structureForConditions = "";
+  }
+
+  function conditionsSignature() {
+    return [
+      condTemp.value,
+      condNa.value,
+      condMg.value,
+      condOligo.value,
+      condDntps.value,
+      condSuboptimality.value,
+      condMaxFoldings.value
+    ].join("|");
+  }
+
+  function conditionsQuery() {
+    return "&temp=" + encodeURIComponent(condTemp.value) +
+      "&na=" + encodeURIComponent(condNa.value) +
+      "&mg=" + encodeURIComponent(condMg.value) +
+      "&oligo=" + encodeURIComponent(condOligo.value) +
+      "&dntps=" + encodeURIComponent(condDntps.value) +
+      "&suboptimality=" + encodeURIComponent(condSuboptimality.value) +
+      "&max_foldings=" + encodeURIComponent(condMaxFoldings.value);
   }
 
   function updateIdtBar() {
@@ -454,8 +662,13 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
 
   function showOffline() {
     clearElement(stageBox);
+    clearElement(homodimerStage);
     clearElement(legendBox);
     clearElement(problemsBox);
+    homodimerPanel.hidden = true;
+    homodimerSummary.textContent = "";
+    homodimerDetail.textContent = "";
+    propertiesPanel.hidden = true;
     summaryBox.textContent = "";
     linearData = null;
     invalidateStructure();
@@ -504,12 +717,14 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
     }
 
     var requestId = ++structureRequestId;
+    var requestConditions = conditionsSignature();
     setStructureLoading(true);
     structureData = null;
     structureForRaw = "";
+    structureForConditions = "";
     setView("structure");
 
-    fetch("/api/structure?seq=" + encodeURIComponent(raw))
+    fetch("/api/structure?seq=" + encodeURIComponent(raw) + conditionsQuery())
       .then(function (response) {
         return response.json();
       })
@@ -517,12 +732,14 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
         if (!data || typeof data !== "object") {
           throw new Error("invalid response");
         }
-        if (requestId !== structureRequestId || seqBox.value !== raw) {
+        if (requestId !== structureRequestId || seqBox.value !== raw ||
+            conditionsSignature() !== requestConditions) {
           return;
         }
         setStructureLoading(false);
         structureData = data;
         structureForRaw = raw;
+        structureForConditions = requestConditions;
         if (data.signed_in === false) {
           signedIn = false;
           updateIdtBar();
@@ -531,11 +748,13 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
         renderAll();
       })
       .catch(function () {
-        if (requestId !== structureRequestId || seqBox.value !== raw) {
+        if (requestId !== structureRequestId || seqBox.value !== raw ||
+            conditionsSignature() !== requestConditions) {
           return;
         }
         setStructureLoading(false);
         structureForRaw = raw;
+        structureForConditions = requestConditions;
         structureData = {
           ok: false,
           svg: "",
@@ -571,6 +790,16 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
       requestRender(seqBox.value);
     }, debounceMs);
   });
+
+  [condTemp, condNa, condMg, condOligo, condDntps,
+    condSuboptimality, condMaxFoldings].forEach(
+    function (input) {
+      input.addEventListener("input", function () {
+        invalidateStructure();
+        renderAll();
+      });
+    }
+  );
 
   idtSignIn.addEventListener("click", function () {
     showIdtForm(false);
@@ -637,7 +866,8 @@ h1 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
     if (structureLoading) {
       return;
     }
-    if (structureData && structureForRaw === seqBox.value) {
+    if (structureData && structureForRaw === seqBox.value &&
+        structureForConditions === conditionsSignature()) {
       setView("structure");
     } else {
       requestStructure(seqBox.value);

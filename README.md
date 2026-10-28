@@ -1,13 +1,16 @@
-# OligoVisualizer 2.0
+# OligoVisualizer 2.1
 
 Paste an oligonucleotide in IDT's own notation and see a schematic of the molecule: one
 horizontal 5' → 3' row, one coloured circle per nucleotide, a mini sugar ring below each
 modified position, the linkage drawn as the connector between circles, and every modification
 code drawn as a labelled tag.
 
-The **Secondary structure** tab asks IDT's OligoAnalyzer for hairpin foldings, picks the one with
-the lowest Gibbs free energy (ΔG), and draws its base-pair map as native SVG. The linear view is
-still the default and still works without an IDT account.
+The **Secondary structure** tab asks IDT's OligoAnalyzer for hairpin foldings, self-dimer
+candidates and basic oligo properties in the same click. It picks the lowest-Gibbs-free-energy
+(ΔG) hairpin and the lowest-ΔG homodimer, draws both as native SVG with the same 2' sugar rings
+shown in the linear view, and shows Tm, molecular weight, extinction coefficient, nmol/OD260 and
+µg/OD260 from the Analyzer. The linear view is still the default and still works without an IDT
+account.
 
 The on-screen heading still reads "Oligo viewer"; this file is the project's documentation.
 
@@ -27,8 +30,13 @@ Double-click **`Start Oligo Viewer.bat`**.
 |What you see|What it means|
 |---|---|
 |Coloured circle with a letter|One nucleotide, in its base colour. Green A, blue C, amber G, vermilion T, pink U, light-blue I, grey for a degenerate base, pale grey `?` for a custom mix.|
-|Mini pentose ring below a circle|The sugar at that position. No ring = DNA (2'-deoxy). The ring's label reads `OH` = ribose, `OMe` = 2'-O-methyl, `F` = 2'-fluoro, `LNA` = locked nucleic acid (blue bridge), `MOE` = 2'-O-methoxyethyl.|
+|Mini pentose ring beside or below a circle|The sugar at that position. No ring = DNA (2'-deoxy). The ring oxygen is at the top; `N` marks the base at C1'; the substituent label is on C2'; `3'` and `5'` mark the backbone carbons. Labels: `OH` = ribose, `OMe` = 2'-O-methyl, `F` = 2'-fluoro, `LNA` = locked nucleic acid (blue bridge), `MOE` = 2'-O-methoxyethyl.|
 |Grey line between circles|Ordinary phosphate linkage.|
+|Solid blue line joining two bases|A Watson–Crick pair: A–T/U or G–C.|
+|Long-dashed teal line|A G·U or G·T wobble pair.|
+|Dotted amber line|Another noncanonical pair identity, such as G·A or A·C, when IDT returns it. The line does not claim a specific Hoogsteen or sugar-edge geometry.|
+|Thin grey dotted line|A pair involving an ambiguous or degenerate base.|
+|Faded pair line|A homodimer pair that IDT does not count in ΔG (the `:` positions). The colour and dash still show its class.|
 |Dark red line with a circled **S**|Phosphorothioate linkage at that position. A short red stub after the last circle means the terminal linkage is thioated too.|
 |Pale yellow box with a `/Code/`|A modification, printed exactly as you typed it. Above the first circle = 5' end, above the last circle = 3' end, between circles = internal, attached to the nucleotide it follows.|
 |Grey hatched circle with a letter|A degenerate base (N, R, Y, …).|
@@ -42,27 +50,63 @@ A legend under the picture lists only the glyphs that sequence actually uses.
 1. Click **Sign in to IDT** and enter your IDT account in the local form. The password is sent to
    this local viewer and forwarded to IDT over HTTPS; it is not stored or logged. Only the IDT
    session and anti-forgery tokens stay in the viewer process's memory.
-2. Click **Predict structure**. The tool calls the real IDT OligoAnalyzer hairpin endpoint with
-   the same default conditions the Analyzer uses for hairpin folding: DNA mode, 25 °C, 50 mM
-   Na⁺, 3 mM Mg²⁺, 50% suboptimality, 20 maximum foldings, linear sequence. DNA is IDT's
-   default mode even when the sequence contains U.
-3. The view switches to the fold with the lowest **ΔG** in kcal/mol (not just the first
-   single-hairpin fold). The summary shows ΔG, Tm and which structure was chosen; the detail line
-   shows ΔH, ΔS and the conditions.
+2. Set the IDT conditions if needed — temperature, Na⁺, Mg²⁺, oligo concentration, dNTP
+   concentration, suboptimality and maximum foldings — then click **Predict structure**. The
+   defaults match IDT's qPCR defaults: DNA mode, 25 °C, 50 mM Na⁺, 3 mM Mg²⁺, 0.2 µM oligo,
+   0.8 mM dNTPs, 50% suboptimality, 20 maximum foldings, linear sequence. DNA is IDT's default
+   mode even when the sequence contains U. Na⁺ and Mg²⁺ affect both analyses; temperature,
+   suboptimality and maximum foldings affect the hairpin; oligo and dNTP concentrations affect
+   the self-dimer.
+3. One click makes the IDT requests and the page shows a property strip plus two stacked
+   structure panels. The property strip shows the Analyzer values; it remains visible if you
+   switch to the linear view. The hairpin panel shows the fold with the lowest **ΔG** in
+   kcal/mol (not just the first single-hairpin fold). Its summary shows ΔG, Tm and which
+   structure was chosen; the detail line shows ΔH, ΔS and the conditions.
 4. A fold that is one continuous stem-loop is drawn as circles on two arms with a loop. A fold
    with multiple stems is drawn as connected stem-loops: separate hairpins sit side by side,
    nested stems stack, and multiloops branch above their parent stem. A labelled arc diagram is
-   only a last-resort fallback. The structure drawing shows bases only; modification codes remain
-   visible in the linear view.
+   only a last-resort fallback. The structure drawing shows bases and 2' sugar rings; each
+   sugar icon sits beside its base in the clearer local white space, away from the backbone and
+   base-pair rungs. Base-pair lines are classified from the two base identities: solid blue
+   Watson–Crick, long-dashed teal G·U/G·T wobble, dotted amber other noncanonical, and thin grey
+   dotted unknown. In the homodimer, faded lines are IDT's extra `:` pairs that are not counted
+   in ΔG. `/Code/` tags and phosphorothioate markers remain in the linear view.
+5. The homodimer panel shows IDT's self-dimer candidate with the most negative ΔG. The top row
+   is the oligo 5' → 3'; the bottom row is the second copy 3' → 5'. Overhangs, full-opacity
+   counted base pairs, faded additional complementary bases, and 2' sugar icons on both copies
+   are shown.
+   The detail line reports the number of candidates, the perfect-complement ΔG, and the self-dimer
+   concentrations. If IDT finds no self-dimer, the hairpin stays visible and the homodimer panel
+   reports that no dimer was found.
 
-Modified oligos are sent to IDT exactly as written. The tool does not strip `*`, `+`, `r`, `m`,
+Modified oligos are sent with their chemistry intact. The tool does not strip `*`, `+`, `r`, `m`,
 `/Code/` tags or custom mixes; the Analyzer decides whether it accepts a particular chemistry.
-If it rejects one, the IDT error is shown and the linear view remains available.
+Two adjacent slash codes written with one shared slash, such as `/i2FG/i2MOErG/`, are sent to
+IDT as `/i2FG//i2MOErG/` because the Analyzer requires each code to have its own opening slash.
+If IDT rejects a chemistry, its error is shown and the linear view remains available.
 
-Predictions are cached per sequence for the running viewer. Switching tabs reuses the cached
-result, and clicking **Predict structure** again reuses it without a second IDT call. **Sign out**
-clears the IDT session; predictions then ask for sign-in again. The password field is cleared
-immediately after submission.
+Predictions are cached per sequence and condition set for the running viewer; a cached result
+contains the properties, hairpin and homodimer. Switching tabs reuses the cached result, and
+clicking **Predict structure** again reuses it without a second IDT call. Changing a condition
+clears both panels until you predict again. **Sign out** clears the IDT session; predictions then
+ask for sign-in again. The password field is cleared immediately after submission.
+
+## Analyzer properties
+
+After **Predict structure**, the property strip shows IDT's basic OligoAnalyzer values:
+
+|Readout|Unit|
+|---|---|
+|Tm|°C|
+|Molecular weight|g/mol|
+|Extinction coefficient|L/(mol·cm)|
+|UV absorbance|nmol/OD260 and µg/OD260|
+
+These values use the current Na⁺, Mg²⁺, oligo and dNTP inputs. They are IDT's values, not
+recalculated here. The **Analyzer Tm** in the property strip is the oligo's melt temperature; it
+can differ from the **hairpin Tm** in the structure summary, which belongs to the chosen fold.
+If the property request fails, the hairpin and homodimer drawings remain visible and an amber
+warning names the failure.
 
 ## What you can paste
 
@@ -102,17 +146,33 @@ costs you that one character, not the sequence.
   with the code's base letter and a sugar icon, and do not count as modifications in the summary.
 - Degenerate bases are hatched, custom mixes are split proportionally — a mixture with defined
   percentages is a different fact from an ambiguity code.
-- Lengths and counts are exact. ΔG, Tm, ΔH and ΔS are IDT's values, formatted for display only;
-  the tool never recomputes them.
+- Lengths and counts are exact. ΔG, Tm, ΔH, ΔS, molecular weight, extinction coefficient and the
+  UV amounts are IDT's values, formatted for display only; the tool never recomputes them.
+- The Analyzer Tm and the hairpin structure Tm are different quantities. The property strip uses
+  the Analyze endpoint; the hairpin summary uses the chosen folded structure's Tm.
+- The homodimer shown is IDT's self-dimer candidate with the lowest ΔG. Its bottom strand is a
+  second copy of the same oligo; 2' icons are mirrored onto both copies. Full-opacity rungs are
+  the pairs IDT counts in ΔG; faded rungs are additional complementary bases that IDT does not
+  count.
+- The pair-line class is sequence-inferred. IDT's mFold map supplies pair positions, not
+  Hoogsteen/sugar-edge geometry. The current hairpin map may contain only Watson–Crick and, in
+  some cases, G·U/G·T wobble pairs; mFold excludes pseudoknots and base triples. G-quadruplex,
+  i-motif and triplex connectivity is not drawn because IDT does not return it.
 
 ## Limits
 
 - About 500 nucleotides is the practical maximum for the linear drawing; it is one row and grows
   linearly, so beyond that it gets very wide and slow. There is no guard.
-- Secondary structure requires internet access and a signed-in IDT account. The prediction uses
-  IDT's defaults listed above; they are displayed but not editable in this version.
+- Secondary structure requires internet access and a signed-in IDT account. The seven Analyzer
+  inputs are editable; IDT remains the authority and reports an error for combinations it
+  rejects. The properties, hairpin and self-dimer are separate IDT endpoints, so one click makes
+  three upstream requests even though the browser makes one local request. Pair-line classes are
+  computed locally; they add no IDT request.
+- The drawings show 2D base-pair maps, not 3D structures. G-quadruplexes, i-motifs, triplexes,
+  pseudoknots, A-minor contacts, ribose zippers and kissing loops are outside the IDT map and
+  are not represented by these lines.
 - ΔG and Tm are IDT's values, not recalculated here. Complex folds are drawn as connected
-  stem-loops, not as a full two-dimensional chemical diagram with sugar and modification details.
+  stem-loops, not as a full two-dimensional chemical diagram with modification tags.
 - If your IDT account presents an MFA/CAPTCHA challenge, this local form cannot complete it. Use
   IDT in a normal browser for that account.
 
@@ -122,14 +182,15 @@ costs you that one character, not the sequence.
 |---|---|
 |`Start Oligo Viewer.bat`|The only thing you need to run. Sets up `.venv` once, then starts the viewer.|
 |`app.py`|Local web server: page, `/api/render`, `/api/structure`, and `/api/idt/*` (8765–8785).|
-|`idt.py`|IDT sign-in, hairpin request, CT base-pair map retrieval, ΔG selection.|
+|`idt.py`|IDT sign-in, Analyzer properties, hairpin and CT retrieval, self-dimer request, selection.|
 |`notation.py`|Parses the IDT string into a sequence model; collects problems instead of raising.|
-|`render.py`|Draws the linear schematic and secondary-structure SVG; owns palette and geometry.|
+|`render.py`|Draws the linear schematic, hairpin SVG and homodimer SVG; owns palette and geometry.|
 |`static/index.html`|The page: textarea, IDT sign-in, tabs, debounced fetch, zoom, legend. No build step.|
 |`dev_run.py`|Optional development launcher; reads gitignored `.env` for auto-login. Not used by the `.bat`.|
+|`CHANGELOG.md`|Release notes for 2.0 and 2.1.|
 |`GLOSSARY.md`|Domain vocabulary, including why "thiolated" is not used.|
 |`docs/adr/0001-server-rendered-svg.md`|Why the drawing happens in Python rather than the browser.|
-|`tests/`|107 `unittest` tests: parser, renderers, IDT client, HTTP contract.|
+|`tests/`|147 `unittest` tests: parser, renderers, IDT client, HTTP contract.|
 
 ## Development auto-login (optional)
 
@@ -148,7 +209,7 @@ system-wide. `.gitignore` is not encryption, so remove the file when you no long
 
 ```
 py -m unittest tests.test_notation tests.test_render tests.test_idt -v   # no network, no venv
-.venv\Scripts\python.exe -m unittest discover -v                        # all 107, server too
+.venv\Scripts\python.exe -m unittest discover -v                        # all 147, server too
 ```
 
 No test contacts idtdna.com; the IDT client is exercised with fake HTTP methods and fake
@@ -165,4 +226,6 @@ responses.
 |Secondary structure says `Sign in to IDT`|Sign in with the local form; the session lives only in the running viewer process.|
 |IDT sign-in or prediction gives an HTTP/auth error|IDT may be down, the login page may have changed, or the session expired. Sign in again; the linear view is unaffected.|
 |A sequence has no predicted structure|IDT found no base pairs. This is a warning, not a drawing failure.|
+|No homodimer panel drawing|IDT found no self-dimer candidate. The hairpin remains visible and the warning names the missing analysis.|
+|Property strip missing after Predict|IDT's property endpoint failed; the structures remain visible and an amber warning names the failure. Predict again after correcting the sequence, conditions or IDT session.|
 |MFA/CAPTCHA appears on IDT's site|This local form cannot complete it. Use IDT in a normal browser for that account.|

@@ -3,7 +3,16 @@
 import unittest
 
 import app
-from idt import Fold, IdtAuthError, IdtError, IdtSessionExpired, NoStructureError
+from idt import (
+    Fold,
+    FoldConditions,
+    Homodimer,
+    IdtAuthError,
+    IdtError,
+    IdtSessionExpired,
+    NoStructureError,
+    OligoProperties,
+)
 
 
 class FakeSession:
@@ -16,6 +25,14 @@ class FakeSession:
         self.error = None
         self.login_error = None
         self.fold = make_fold()
+        self.homodimer = None
+        self.homodimer_error = None
+        self.homodimer_calls = 0
+        self.homodimer_args = []
+        self.properties = make_properties()
+        self.properties_error = None
+        self.properties_calls = 0
+        self.properties_args = []
 
     @property
     def signed_in(self):
@@ -31,12 +48,51 @@ class FakeSession:
         self.sign_out_calls += 1
         self._signed_in = False
 
-    def predict(self, sequence, nucleotide_type):
+    def predict(self, sequence, nucleotide_type, conditions):
         self.predict_calls += 1
-        self.predict_args.append((sequence, nucleotide_type))
+        self.predict_args.append((sequence, nucleotide_type, conditions))
         if self.error is not None:
             raise self.error
         return self.fold
+
+    def predict_homodimer(self, sequence, nucleotide_type, conditions):
+        self.homodimer_calls += 1
+        self.homodimer_args.append((sequence, nucleotide_type, conditions))
+        if self.homodimer_error is not None:
+            raise self.homodimer_error
+        return self.homodimer or make_homodimer(self.fold.bases)
+
+    def analyze_properties(self, sequence, nucleotide_type, conditions):
+        self.properties_calls += 1
+        self.properties_args.append((sequence, nucleotide_type, conditions))
+        if self.properties_error is not None:
+            raise self.properties_error
+        return self.properties
+
+
+def make_properties():
+    return OligoProperties(
+        melt_temp_c=73.2,
+        molecular_weight_g_mol=8649.6,
+        extinction_coefficient_l_mol_cm=269700.0,
+        nmol_per_od260=3.71,
+        ug_per_od260=32.07,
+    )
+
+
+def make_homodimer(bases):
+    top = bases
+    bottom = bases[::-1]
+    dimer = "5' " + top + "\n   " + "|" * len(top) + "\n3' " + bottom
+    return Homodimer(
+        sequence=bases,
+        delta_g=-12.0,
+        base_pairs=len(bases),
+        additional_pairs=0,
+        max_delta_g=-20.0,
+        dimer=dimer,
+        result_count=1,
+    )
 
 
 def make_fold():
@@ -79,6 +135,11 @@ class ServerTests(unittest.TestCase):
         self.assertIn('id="seq"', body)
         self.assertIn('id="idtform"', body)
         self.assertIn('id="predict"', body)
+        self.assertIn('id="homodimerpanel"', body)
+        self.assertIn('id="cond-oligo"', body)
+        self.assertIn('id="cond-dntps"', body)
+        self.assertIn('id="properties"', body)
+        self.assertIn('id="prop-tm"', body)
 
     def test_empty_sequence(self):
         response = self.client.get("/api/render?seq=")
@@ -141,12 +202,27 @@ class ServerTests(unittest.TestCase):
         self.assertIn("25 °C", payload["detail"])
         self.assertIn("50 mM", payload["detail"])
         self.assertIn("3 mM", payload["detail"])
-        self.assertIn('class="base-pair"', payload["svg"])
+        self.assertIn('class="base-pair wc"', payload["svg"])
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.assertEqual(payload["structure"]["name"], "2")
         self.assertEqual(payload["structure"]["delta_g_kcal_mol"], -9.467)
         self.assertEqual(payload["structure"]["layout"], "stem-loop")
         self.assertEqual(len(payload["structure"]["base_pairs"]), 8)
+        dimer = payload["homodimer"]
+        self.assertIsNotNone(dimer)
+        self.assertIs(dimer["ok"], True)
+        self.assertEqual(dimer["layout"], "homodimer")
+        self.assertIn('data-layout="homodimer"', dimer["svg"])
+        self.assertEqual(dimer["base_pairs"], 20)
+        self.assertIn("most likely homodimer", dimer["summary"])
+        properties = payload["properties"]
+        self.assertEqual(properties["melt_temp_c"], 73.2)
+        self.assertEqual(properties["molecular_weight_g_mol"], 8649.6)
+        self.assertEqual(
+            properties["extinction_coefficient_l_mol_cm"], 269700.0
+        )
+        self.assertEqual(properties["nmol_per_od260"], 3.71)
+        self.assertEqual(properties["ug_per_od260"], 32.07)
 
     def test_structure_uses_idt_dna_mode_even_with_u(self):
         response = self.client.get(
@@ -184,6 +260,181 @@ class ServerTests(unittest.TestCase):
         self.client.get(url)
         self.client.get(url)
         self.assertEqual(self.fake.predict_calls, 1)
+        self.assertEqual(self.fake.properties_calls, 1)
+        self.assertEqual(self.fake.homodimer_calls, 1)
+
+    def test_structure_conditions_reach_idt(self):
+        response = self.client.get(
+            "/api/structure",
+            query_string={
+                "seq": "ACGTACGTACGTACGTACGT",
+                "temp": "37",
+                "na": "100",
+                "mg": "1",
+                "suboptimality": "25",
+                "max_foldings": "10",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.fake.predict_args[-1][2],
+            FoldConditions(37, 100, 1, 25, 10),
+        )
+        self.assertEqual(self.fake.properties_args[-1][2], self.fake.predict_args[-1][2])
+        self.assertEqual(self.fake.homodimer_args[-1][2], self.fake.predict_args[-1][2])
+
+    def test_structure_conditions_separate_cache_entries(self):
+        url = "/api/structure?seq=ACGTACGTACGTACGTACGT"
+        changed = url + "&temp=37"
+        self.client.get(url)
+        self.client.get(url)
+        self.client.get(changed)
+        self.client.get(changed)
+        self.assertEqual(self.fake.predict_calls, 2)
+
+    def test_structure_invalid_conditions_do_not_call_idt(self):
+        cases = (
+            (
+                {"temp": "101"},
+                "Temperature must be a number between 0 and 100 °C.",
+            ),
+            (
+                {"max_foldings": "2.5"},
+                "Maximum foldings must be a whole number between 1 and 100.",
+            ),
+            (
+                {"oligo": "0"},
+                "Oligo concentration must be a number between 0.0001 and 10000 µM.",
+            ),
+            (
+                {"dntps": "-1"},
+                "dNTP concentration must be a number between 0 and 1000 mM.",
+            ),
+        )
+        for query, message in cases:
+            query["seq"] = "ACGT"
+            payload = self.client.get(
+                "/api/structure", query_string=query
+            ).get_json()
+            self.assertIs(payload["ok"], False)
+            self.assertEqual(payload["errors"][0]["message"], message)
+        self.assertEqual(self.fake.predict_calls, 0)
+        self.assertEqual(self.fake.properties_calls, 0)
+        self.assertEqual(self.fake.homodimer_calls, 0)
+
+    def test_homodimer_conditions_reach_idt(self):
+        response = self.client.get(
+            "/api/structure",
+            query_string={
+                "seq": "ACGTACGTACGTACGTACGT",
+                "oligo": "0.25",
+                "dntps": "0",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        conditions = self.fake.homodimer_args[-1][2]
+        self.assertEqual(conditions.oligo_conc_um, 0.25)
+        self.assertEqual(conditions.dntps_mm, 0.0)
+
+    def test_property_failure_keeps_structures(self):
+        self.fake.properties_error = IdtError("Property model failed.")
+        response = self.client.get(
+            "/api/structure?seq=ACGTACGTACGTACGTACGT"
+        )
+        payload = response.get_json()
+        self.assertIs(payload["ok"], True)
+        self.assertIsNone(payload["properties"])
+        self.assertTrue(
+            any(
+                "Property model failed" in warning["message"]
+                for warning in payload["warnings"]
+            )
+        )
+
+    def test_homodimer_additional_pairs_get_legend_key(self):
+        self.fake.homodimer = Homodimer(
+            sequence="ACGT",
+            delta_g=-8.0,
+            base_pairs=2,
+            additional_pairs=2,
+            max_delta_g=-12.0,
+            dimer="5' ACGT\n   ||::\n3' TGCA",
+            result_count=1,
+        )
+        response = self.client.get(
+            "/api/structure?seq=ACGTACGTACGTACGTACGT"
+        )
+        payload = response.get_json()
+        self.assertIn(
+            {"kind": "pair", "label": "Additional, not counted", "style": "additional"},
+            payload["legend"],
+        )
+
+    def test_homodimer_failure_keeps_hairpin(self):
+        self.fake.homodimer_error = NoStructureError(
+            "IDT found no self-dimer for this sequence."
+        )
+        response = self.client.get(
+            "/api/structure?seq=ACGTACGTACGTACGTACGT"
+        )
+        payload = response.get_json()
+        self.assertIs(payload["ok"], True)
+        self.assertIsNone(payload["homodimer"])
+        self.assertTrue(
+            any(
+                "no self-dimer" in warning["message"]
+                for warning in payload["warnings"]
+            )
+        )
+
+    def test_structure_sugar_icons_from_local_sequence(self):
+        self.fake.fold = Fold(
+            bases="GCGCAAAAGCG",
+            pairs=((0, 10), (1, 9), (2, 8)),
+            structure_name="1",
+            delta_g=-3.2,
+            tm_c=40.0,
+            delta_h=-30.0,
+            delta_s=-90.0,
+            structure_count=1,
+            nucleotide_type="DNA",
+            temperature_c=25,
+            sodium_mm=50,
+            magnesium_mm=3,
+            suboptimality_percent=50,
+            max_foldings=20,
+        )
+        response = self.client.get(
+            "/api/structure",
+            query_string={"seq": "rGrCrGrCrArArArArGrCrG"},
+        )
+        payload = response.get_json()
+        self.assertIs(payload["ok"], True)
+        self.assertEqual(payload["svg"].count('class="structure-sugar"'), 11)
+        self.assertIn(">OH<", payload["svg"])
+        sugars = [item for item in payload["legend"] if item["kind"] == "sugar"]
+        self.assertEqual([item["label"] for item in sugars], ["2'-OH"])
+
+    def test_structure_sugar_mismatch_hides_icons_and_warns(self):
+        response = self.client.get(
+            "/api/structure",
+            query_string={"seq": "rGrCrGrCrArArArArGrCrG"},
+        )
+        payload = response.get_json()
+        self.assertIs(payload["ok"], True)
+        self.assertNotIn('class="structure-sugar"', payload["svg"])
+        messages = [warning["message"] for warning in payload["warnings"]]
+        self.assertIn(
+            (
+                "IDT returned a different number of bases than the parsed "
+                "sequence; 2' modification icons are hidden."
+            ),
+            messages,
+        )
+        self.assertEqual(
+            [item for item in payload["legend"] if item["kind"] == "sugar"],
+            [],
+        )
 
     def test_structure_no_base_pairs_is_warning_not_error(self):
         self.fake.error = NoStructureError(

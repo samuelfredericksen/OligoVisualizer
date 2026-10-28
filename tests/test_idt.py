@@ -6,14 +6,19 @@ import unittest
 
 from idt import (
     Fold,
+    FoldConditions,
+    Homodimer,
     IdtAuthError,
     IdtError,
     IdtSession,
     IdtSessionExpired,
     NoStructureError,
+    OligoProperties,
     clean_sequence,
     nucleotide_type,
     parse_ct,
+    select_homodimer,
+    select_properties,
     select_structure,
 )
 from notation import parse
@@ -51,6 +56,25 @@ class CleanSequenceTest(unittest.TestCase):
             clean_sequence("/i2FA/*/i2FC/"),
             "/i2FA/*/i2FC/",
         )
+
+    def test_separates_adjacent_single_slash_codes(self):
+        self.assertEqual(
+            clean_sequence("aaa/i2FG/i2MOErG/ggg"),
+            "AAA/i2FG//i2MOErG/GGG",
+        )
+        self.assertEqual(
+            clean_sequence("/5Phos/iSp18/ttt"),
+            "/5Phos//iSp18/TTT",
+        )
+
+    def test_reported_adjacent_fluoro_moe_sequence_is_not_mangled(self):
+        raw = (
+            "CCmC CmCC C*C*C* CTrU TrUT G*G*G* G*G*mG GGG GAC TGA CTG "
+            "ACT GTT TTG G*G*A AAA/i2FG/i2MOErG/GG"
+        )
+        cleaned = clean_sequence(raw)
+        self.assertIn("/i2FG//i2MOErG/", cleaned)
+        self.assertNotIn("/i2FG/I2MOErG/", cleaned)
 
     def test_whitespace_is_removed(self):
         self.assertEqual(clean_sequence(" AC \n GT "), "ACGT")
@@ -223,6 +247,40 @@ class SelectStructureTest(unittest.TestCase):
                 "DNA",
             )
 
+    def test_conditions_fill_missing_idt_metadata(self):
+        conditions = FoldConditions(37, 100, 1, 25, 10)
+        data = {
+            "OutputObj": {
+                "Structures": [
+                    {"StructureName": "solo", "GNode": -1.5},
+                ]
+            }
+        }
+        _chosen, _count, meta = select_structure(data, "DNA", conditions)
+        self.assertEqual(meta["temperature_c"], 37)
+        self.assertEqual(meta["sodium_mm"], 100)
+        self.assertEqual(meta["magnesium_mm"], 1)
+        self.assertEqual(meta["suboptimality_percent"], 25)
+        self.assertEqual(meta["max_foldings"], 10)
+
+    def test_echoed_idt_metadata_wins_over_conditions(self):
+        data = hairpin_payload()
+        data.update(
+            Temperature=30,
+            SodiumConc=80,
+            MagConc=2,
+            PercentSuboptimal=10,
+            MaxFoldings=5,
+        )
+        _chosen, _count, meta = select_structure(
+            data, "DNA", FoldConditions(37, 100, 1, 25, 10)
+        )
+        self.assertEqual(meta["temperature_c"], 30)
+        self.assertEqual(meta["sodium_mm"], 80)
+        self.assertEqual(meta["magnesium_mm"], 2)
+        self.assertEqual(meta["suboptimality_percent"], 10)
+        self.assertEqual(meta["max_foldings"], 5)
+
 
 class SignInTest(unittest.TestCase):
     def test_success_stores_tokens_but_not_password(self):
@@ -288,6 +346,94 @@ class SignInTest(unittest.TestCase):
         self.assertFalse(session.signed_in)
 
 
+def properties_payload() -> dict:
+    return {
+        "MeltTemp": 73.2,
+        "MolecularWeight": 8649.6,
+        "ExtCoefficient": 269700.0,
+        "NmoleOD": 3.71,
+        "UgOD": 32.07,
+        "HasErrors": False,
+        "HasModelErrors": False,
+    }
+
+
+class SelectPropertiesTest(unittest.TestCase):
+    def test_returns_all_five_analyzer_values(self):
+        properties = select_properties(properties_payload())
+        self.assertIsInstance(properties, OligoProperties)
+        self.assertEqual(properties.melt_temp_c, 73.2)
+        self.assertEqual(properties.molecular_weight_g_mol, 8649.6)
+        self.assertEqual(
+            properties.extinction_coefficient_l_mol_cm, 269700.0
+        )
+        self.assertEqual(properties.nmol_per_od260, 3.71)
+        self.assertEqual(properties.ug_per_od260, 32.07)
+
+    def test_missing_property_is_an_error(self):
+        data = properties_payload()
+        data["UgOD"] = None
+        with self.assertRaisesRegex(IdtError, "incomplete"):
+            select_properties(data)
+
+    def test_model_error_is_reported(self):
+        data = {
+            "HasErrors": False,
+            "HasModelErrors": True,
+            "ModelErrors": ["Oligo Sequence is required."],
+        }
+        with self.assertRaisesRegex(IdtError, "Oligo Sequence"):
+            select_properties(data)
+
+
+def homodimer_payload() -> dict:
+    return {
+        "PrimarySequence": "ACGTACGT",
+        "MaxDeltaG": -20.0,
+        "Results": [
+            {
+                "DeltaG": -4.0,
+                "BasePairs": 3,
+                "Dimer": "5' ACGTACGT\n   |||     \n3' TGCATGCA",
+            },
+            {
+                "DeltaG": -8.0,
+                "BasePairs": 5,
+                "Dimer": "5' ACGTACGT\n   ||||:   \n3' TGCATGCA",
+            },
+        ],
+    }
+
+
+class SelectHomodimerTest(unittest.TestCase):
+    def test_chooses_lowest_delta_g(self):
+        chosen = select_homodimer(homodimer_payload())
+        self.assertEqual(chosen.delta_g, -8.0)
+        self.assertEqual(chosen.base_pairs, 5)
+        self.assertEqual(chosen.additional_pairs, 1)
+        self.assertEqual(chosen.result_count, 2)
+        self.assertEqual(chosen.sequence, "ACGTACGT")
+        self.assertEqual(chosen.max_delta_g, -20.0)
+
+    def test_no_results_is_no_structure(self):
+        with self.assertRaises(NoStructureError):
+            select_homodimer({"PrimarySequence": "ACGT", "Results": []})
+
+    def test_errors_are_reported(self):
+        data = {
+            "HasErrors": True,
+            "Errors": {
+                "Position": 2,
+                "ErrorSymbol": "!",
+                "ErrorText": "Invalid bases were detected.",
+            },
+        }
+        with self.assertRaises(IdtError) as caught:
+            select_homodimer(data)
+        self.assertEqual(caught.exception.position, 2)
+        self.assertEqual(caught.exception.token, "!")
+
+
 class PredictTest(unittest.TestCase):
     def test_payload_headers_and_chosen_fold(self):
         session = IdtSession()
@@ -331,6 +477,12 @@ class PredictTest(unittest.TestCase):
         self.assertEqual(captured["payload"]["settings"]["MgConc"], 3)
         self.assertEqual(captured["payload"]["settings"]["NucleotideType"], "DNA")
         self.assertEqual(captured["payload"]["hairpinSettings"]["Temp"], 25)
+        self.assertEqual(
+            captured["payload"]["hairpinSettings"]["Suboptimality"], 50
+        )
+        self.assertEqual(
+            captured["payload"]["hairpinSettings"]["MaxFoldings"], 20
+        )
         self.assertEqual(captured["headers"]["__RequestVerificationToken"], "verify")
         self.assertEqual(
             session._auth_headers(),
@@ -340,6 +492,110 @@ class PredictTest(unittest.TestCase):
         self.assertEqual(
             captured["raw_headers"]["__RequestVerificationToken"], "stateless"
         )
+
+    def test_properties_payload_and_values(self):
+        session = IdtSession()
+        session._signed_in = True
+        session._base = "https://www.idtdna.com"
+        captured = {}
+
+        def fake_post_json(url, payload, headers=None):
+            captured["url"] = url
+            captured["payload"] = payload
+            return properties_payload()
+
+        session._post_json = fake_post_json
+        conditions = FoldConditions(37, 100, 1, 25, 10, 0.3, 0.0)
+        properties = session.analyze_properties("ACGTACGT", "DNA", conditions)
+
+        self.assertEqual(properties.melt_temp_c, 73.2)
+        self.assertEqual(
+            captured["url"],
+            "https://www.idtdna.com/api/OligoAnalyzer/Analyze",
+        )
+        self.assertEqual(captured["payload"]["Sequence"], "ACGTACGT")
+        self.assertEqual(captured["payload"]["NaConc"], 100)
+        self.assertEqual(captured["payload"]["MgConc"], 1)
+        self.assertEqual(captured["payload"]["OligoConc"], 0.3)
+        self.assertEqual(captured["payload"]["DNTPsConc"], 0.0)
+        self.assertEqual(captured["payload"]["NucleotideType"], "DNA")
+
+    def test_homodimer_payload_and_selection(self):
+        session = IdtSession()
+        session._signed_in = True
+        session._base = "https://www.idtdna.com"
+        captured = {}
+
+        def fake_post_json(url, payload, headers=None):
+            captured["url"] = url
+            captured["payload"] = payload
+            captured["headers"] = headers
+            return homodimer_payload()
+
+        session._post_json = fake_post_json
+        conditions = FoldConditions(37, 100, 1, 25, 10, 0.25, 0.0)
+        dimer = session.predict_homodimer("ACGTACGT", "DNA", conditions)
+
+        self.assertIsInstance(dimer, Homodimer)
+        self.assertEqual(dimer.delta_g, -8.0)
+        self.assertEqual(
+            captured["url"],
+            "https://www.idtdna.com/calc/analyzer/home/selfdimer",
+        )
+        settings = captured["payload"]["settings"]
+        self.assertEqual(settings["Sequence"], "ACGTACGT")
+        self.assertEqual(settings["NaConc"], 100)
+        self.assertEqual(settings["MgConc"], 1)
+        self.assertEqual(settings["OligoConc"], 0.25)
+        self.assertEqual(settings["DNTPsConc"], 0.0)
+        self.assertEqual(settings["NucleotideType"], "DNA")
+
+    def test_custom_conditions_reach_payload_and_fold(self):
+        session = IdtSession()
+        session._signed_in = True
+        session._token = "verify"
+        session._stateless_token = "stateless"
+        session._base = "https://www.idtdna.com"
+        data = hairpin_payload()
+        for key in (
+            "Temperature",
+            "SodiumConc",
+            "MagConc",
+            "PercentSuboptimal",
+            "MaxFoldings",
+        ):
+            data.pop(key)
+        captured = {}
+
+        def fake_post_json(url, payload, headers=None):
+            captured["payload"] = payload
+            return data
+
+        def fake_post_raw(url, body, headers=None):
+            return ct_text(
+                "GCGCAAAAGCGC",
+                {0: 11, 1: 10, 2: 9, 3: 8},
+            ).encode()
+
+        session._post_json = fake_post_json
+        session._post_raw = fake_post_raw
+        conditions = FoldConditions(37, 100, 1, 25, 10)
+        fold = session.predict("GCGCAAAAGCGC", "DNA", conditions)
+
+        self.assertEqual(captured["payload"]["settings"]["NaConc"], 100)
+        self.assertEqual(captured["payload"]["settings"]["MgConc"], 1)
+        self.assertEqual(captured["payload"]["hairpinSettings"]["Temp"], 37)
+        self.assertEqual(
+            captured["payload"]["hairpinSettings"]["Suboptimality"], 25
+        )
+        self.assertEqual(
+            captured["payload"]["hairpinSettings"]["MaxFoldings"], 10
+        )
+        self.assertEqual(fold.temperature_c, 37)
+        self.assertEqual(fold.sodium_mm, 100)
+        self.assertEqual(fold.magnesium_mm, 1)
+        self.assertEqual(fold.suboptimality_percent, 25)
+        self.assertEqual(fold.max_foldings, 10)
 
     def test_auth_headers_reach_json_and_raw_requests(self):
         session = IdtSession()

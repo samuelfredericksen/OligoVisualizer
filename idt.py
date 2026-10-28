@@ -28,25 +28,21 @@ from urllib.request import (
 )
 from xml.etree import ElementTree
 
-from notation import Sequence, normalize
+from notation import (
+    MOD_CODE_CHARS,
+    Sequence,
+    _looks_like_sequence,
+    normalize,
+)
 
 LOGIN_PAGE = "https://www.idtdna.com/site/account/account?returnurl=/calc/analyzer"
 LOGIN_POST = "https://www.idtdna.com/site/account/login/gatekeepernew"
 HAIRPIN_PATH = "/calc/analyzer/home/hairpin"
+SELFDIMER_PATH = "/calc/analyzer/home/selfdimer"
+ANALYZE_PATH = "/api/OligoAnalyzer/Analyze"
 DATAOUT_PATH = "/api/scitools/dataout"
 PUBLIC_CT_PATH = "/AnalyzerService/analyzerservice.asmx/UNAFoldRetrieveImage"
 BASE_URL = "https://www.idtdna.com"
-
-DEFAULTS = {
-    "NaConc": 50,
-    "MgConc": 3,
-    "SequenceType": "Linear",
-    "MaxFoldings": 20,
-    "StartPos": 0,
-    "StopPos": 0,
-    "Temp": 25,
-    "Suboptimality": 50,
-}
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) OligoVisualizer/2"
 
@@ -101,19 +97,95 @@ class Fold:
     max_foldings: int
 
 
+@dataclass(frozen=True)
+class OligoProperties:
+    melt_temp_c: float
+    molecular_weight_g_mol: float
+    extinction_coefficient_l_mol_cm: float
+    nmol_per_od260: float
+    ug_per_od260: float
+
+
+@dataclass(frozen=True)
+class Homodimer:
+    sequence: str
+    delta_g: float
+    base_pairs: int
+    additional_pairs: int
+    max_delta_g: float | None
+    dimer: str
+    result_count: int
+
+
+@dataclass(frozen=True)
+class FoldConditions:
+    temperature_c: float = 25
+    sodium_mm: float = 50
+    magnesium_mm: float = 3
+    suboptimality_percent: float = 50
+    max_foldings: int = 20
+    # The Analyzer's self-dimer endpoint also uses these two values.
+    oligo_conc_um: float = 0.2
+    dntps_mm: float = 0.8
+
+
+DEFAULT_CONDITIONS = FoldConditions()
+
+DEFAULTS = {
+    "SequenceType": "Linear",
+    "StartPos": 0,
+    "StopPos": 0,
+}
+
+
 # --- pure helpers ---------------------------------------------------------
+
+
+def _protect_code_chains(text: str) -> tuple[str, list[str]]:
+    """Canonicalise slash-delimited code chains for the Analyzer payload.
+
+    IDT accepts two adjacent codes as ``/i2FG//i2MOErG/``.  The local parser
+    also accepts the shorthand ``/i2FG/i2MOErG/``, where one slash serves as
+    both closing and opening delimiter; the Analyzer does not.  Rebuild a
+    chain with two slashes between codes, and keep the whole chain out of the
+    base-uppercasing pass so an ``i`` is never changed to inosine.
+    """
+    protected: list[str] = []
+    pieces: list[str] = []
+    i = 0
+    while i < len(text):
+        if text[i] != "/":
+            pieces.append(text[i])
+            i += 1
+            continue
+        closing = text.find("/", i + 1)
+        if closing == -1:
+            pieces.append(text[i:])
+            break
+        codes = [text[i + 1:closing]]
+        end = closing + 1
+        while True:
+            next_slash = text.find("/", end)
+            if next_slash == -1:
+                break
+            following = text[end:next_slash]
+            if (
+                not following
+                or not all(ch in MOD_CODE_CHARS for ch in following)
+                or _looks_like_sequence(following)
+            ):
+                break
+            codes.append(following)
+            end = next_slash + 1
+        protected.append("/" + "//".join(codes) + "/")
+        pieces.append(f"\x00{len(protected) - 1}\x00")
+        i = end
+    return "".join(pieces), protected
 
 
 def clean_sequence(sequence: str) -> str:
     """Clean IDT notation without stripping any modification code."""
-    text = normalize(sequence)
-    protected: list[str] = []
-
-    def keep(match: re.Match[str]) -> str:
-        protected.append(match.group(0))
-        return f"\x00{len(protected) - 1}\x00"
-
-    text = re.sub(r"/[^/]*/", keep, text)
+    text, protected = _protect_code_chains(normalize(sequence))
     uppercase = set("atcgiykswhbvdn")
     text = "".join(ch.upper() if ch in uppercase else ch for ch in text)
     for index, token in enumerate(protected):
@@ -177,7 +249,9 @@ def _struct_error(item: Any) -> IdtError:
 
 
 def select_structure(
-    data: dict, requested_type: str
+    data: dict,
+    requested_type: str,
+    conditions: FoldConditions = DEFAULT_CONDITIONS,
 ) -> tuple[UnafoldStructure, int, dict]:
     """Validate the hairpin response and choose the lowest-G structure."""
     errors = _as_list(data.get("Errors"))
@@ -241,13 +315,142 @@ def select_structure(
 
     meta = {
         "nucleotide_type": str(echoed("NucleotideType", requested_type)),
-        "temperature_c": _float_or(echoed("Temperature", 25), 25),
-        "sodium_mm": _float_or(echoed("SodiumConc", 50), 50),
-        "magnesium_mm": _float_or(echoed("MagConc", 3), 3),
-        "suboptimality_percent": _float_or(echoed("PercentSuboptimal", 50), 50),
-        "max_foldings": _int_or(echoed("MaxFoldings", 20), 20),
+        "temperature_c": _float_or(
+            echoed("Temperature", conditions.temperature_c),
+            conditions.temperature_c,
+        ),
+        "sodium_mm": _float_or(
+            echoed("SodiumConc", conditions.sodium_mm),
+            conditions.sodium_mm,
+        ),
+        "magnesium_mm": _float_or(
+            echoed("MagConc", conditions.magnesium_mm),
+            conditions.magnesium_mm,
+        ),
+        "suboptimality_percent": _float_or(
+            echoed("PercentSuboptimal", conditions.suboptimality_percent),
+            conditions.suboptimality_percent,
+        ),
+        "max_foldings": _int_or(
+            echoed("MaxFoldings", conditions.max_foldings),
+            conditions.max_foldings,
+        ),
     }
     return chosen, len(structures), meta
+
+
+def _dimer_bar_counts(dimer: str) -> tuple[int, int]:
+    """Return (counted, additional) base-pair counts from IDT's text map."""
+    lines = [line for line in dimer.splitlines() if line.strip()]
+    if len(lines) < 3:
+        return 0, 0
+    bars = lines[1]
+    return bars.count("|"), bars.count(":")
+
+
+def select_homodimer(data: dict) -> Homodimer:
+    """Choose the self-dimer with the lowest predicted Gibbs free energy."""
+    errors = _as_list(data.get("Errors"))
+    if data.get("HasErrors"):
+        if errors:
+            error = _struct_error(errors[0])
+            if "no dimer" in str(error).lower():
+                raise NoStructureError(str(error))
+            raise error
+        raise IdtError("IDT rejected the sequence.")
+
+    validation = data.get("ValidationError")
+    if validation:
+        text = _plain_text(str(validation))
+        if "no dimer" in text.lower():
+            raise NoStructureError(text)
+        raise IdtError(text)
+
+    model_errors = _as_list(data.get("ModelErrors"))
+    if data.get("HasModelErrors") and model_errors:
+        error = _struct_error(model_errors[0])
+        if "no dimer" in str(error).lower():
+            raise NoStructureError(str(error))
+        raise error
+
+    items = _as_list(data.get("Results"))
+    matches: list[Homodimer] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        delta_g = _number(item.get("DeltaG"))
+        dimer = str(item.get("Dimer") or "")
+        if delta_g is None or not dimer.strip():
+            continue
+        counted, additional = _dimer_bar_counts(dimer)
+        base_pairs = _int_or(item.get("BasePairs"), counted)
+        matches.append(
+            Homodimer(
+                sequence=str(
+                    data.get("PrimarySequence")
+                    or data.get("Sequence")
+                    or ""
+                ),
+                delta_g=delta_g,
+                base_pairs=base_pairs,
+                additional_pairs=additional,
+                max_delta_g=_number(data.get("MaxDeltaG")),
+                dimer=dimer,
+                result_count=0,
+            )
+        )
+    if not matches:
+        raise NoStructureError(
+            "IDT found no self-dimer for this sequence."
+        )
+
+    chosen = min(enumerate(matches), key=lambda item: (item[1].delta_g, item[0]))
+    result = chosen[1]
+    return Homodimer(
+        sequence=result.sequence,
+        delta_g=result.delta_g,
+        base_pairs=result.base_pairs,
+        additional_pairs=result.additional_pairs,
+        max_delta_g=result.max_delta_g,
+        dimer=result.dimer,
+        result_count=len(items),
+    )
+
+
+def select_properties(data: dict) -> OligoProperties:
+    """Validate the Analyzer property response and return its five values."""
+    errors = _as_list(data.get("Errors"))
+    if data.get("HasErrors"):
+        if errors:
+            raise _struct_error(errors[0])
+        raise IdtError("IDT rejected the sequence.")
+
+    validation = data.get("ValidationError")
+    if validation:
+        raise IdtError(_plain_text(str(validation)))
+
+    model_errors = _as_list(data.get("ModelErrors"))
+    if data.get("HasModelErrors") and model_errors:
+        raise _struct_error(model_errors[0])
+
+    values = {
+        "melt_temp_c": _number(data.get("MeltTemp")),
+        "molecular_weight_g_mol": _number(data.get("MolecularWeight")),
+        "extinction_coefficient_l_mol_cm": _number(data.get("ExtCoefficient")),
+        "nmol_per_od260": _number(data.get("NmoleOD")),
+        "ug_per_od260": _number(data.get("UgOD")),
+    }
+    if any(value is None for value in values.values()):
+        raise IdtError("IDT returned incomplete Analyzer properties.")
+    return OligoProperties(
+        melt_temp_c=values["melt_temp_c"],
+        molecular_weight_g_mol=values["molecular_weight_g_mol"],
+        extinction_coefficient_l_mol_cm=values[
+            "extinction_coefficient_l_mol_cm"
+        ],
+        nmol_per_od260=values["nmol_per_od260"],
+        ug_per_od260=values["ug_per_od260"],
+    )
 
 
 def _checked_ct(text: str) -> str:
@@ -650,7 +853,12 @@ class IdtSession:
 
     # --- prediction -------------------------------------------------------
 
-    def predict(self, sequence: str, nucleotide_type: str) -> Fold:
+    def predict(
+        self,
+        sequence: str,
+        nucleotide_type: str,
+        conditions: FoldConditions = DEFAULT_CONDITIONS,
+    ) -> Fold:
         """Run the Analyzer hairpin prediction and fetch the chosen CT map."""
         with self._lock:
             if not self._signed_in:
@@ -659,17 +867,17 @@ class IdtSession:
             payload = {
                 "settings": {
                     "Sequence": cleaned,
-                    "NaConc": DEFAULTS["NaConc"],
-                    "MgConc": DEFAULTS["MgConc"],
+                    "NaConc": conditions.sodium_mm,
+                    "MgConc": conditions.magnesium_mm,
                     "NucleotideType": nucleotide_type,
                 },
                 "hairpinSettings": {
                     "SequenceType": DEFAULTS["SequenceType"],
-                    "MaxFoldings": DEFAULTS["MaxFoldings"],
+                    "MaxFoldings": conditions.max_foldings,
                     "StartPos": DEFAULTS["StartPos"],
                     "StopPos": DEFAULTS["StopPos"],
-                    "Temp": DEFAULTS["Temp"],
-                    "Suboptimality": DEFAULTS["Suboptimality"],
+                    "Temp": conditions.temperature_c,
+                    "Suboptimality": conditions.suboptimality_percent,
                 },
             }
             data = self._post_json(
@@ -682,7 +890,7 @@ class IdtSession:
                     "X-Requested-With": "XMLHttpRequest",
                 },
             )
-            chosen, count, meta = select_structure(data, nucleotide_type)
+            chosen, count, meta = select_structure(data, nucleotide_type, conditions)
             if not chosen.connectivity_url:
                 raise IdtError(
                     "IDT returned a structure without a base-pair map."
@@ -709,6 +917,59 @@ class IdtSession:
                 suboptimality_percent=meta["suboptimality_percent"],
                 max_foldings=meta["max_foldings"],
             )
+
+    def predict_homodimer(
+        self,
+        sequence: str,
+        nucleotide_type: str,
+        conditions: FoldConditions = DEFAULT_CONDITIONS,
+    ) -> Homodimer:
+        """Run the Analyzer self-dimer prediction and choose the best match."""
+        with self._lock:
+            if not self._signed_in:
+                raise IdtAuthError("Sign in to IDT first.")
+            cleaned = clean_sequence(sequence)
+            payload = {
+                "settings": {
+                    "Sequence": cleaned,
+                    "NaConc": conditions.sodium_mm,
+                    "MgConc": conditions.magnesium_mm,
+                    "DNTPsConc": conditions.dntps_mm,
+                    "OligoConc": conditions.oligo_conc_um,
+                    "NucleotideType": nucleotide_type,
+                },
+            }
+            data = self._post_json(
+                self._base + SELFDIMER_PATH,
+                payload,
+                headers={
+                    "Referer": self._base + "/calc/analyzer",
+                    "Origin": self._base,
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+            return select_homodimer(data)
+
+    def analyze_properties(
+        self,
+        sequence: str,
+        nucleotide_type: str,
+        conditions: FoldConditions = DEFAULT_CONDITIONS,
+    ) -> OligoProperties:
+        """Run the Analyzer's basic property calculation for one sequence."""
+        with self._lock:
+            if not self._signed_in:
+                raise IdtAuthError("Sign in to IDT first.")
+            payload = {
+                "Sequence": clean_sequence(sequence),
+                "NaConc": conditions.sodium_mm,
+                "MgConc": conditions.magnesium_mm,
+                "DNTPsConc": conditions.dntps_mm,
+                "OligoConc": conditions.oligo_conc_um,
+                "NucleotideType": nucleotide_type,
+            }
+            data = self._post_json(self._base + ANALYZE_PATH, payload)
+            return select_properties(data)
 
     def _retrieve_ct(self, location: str) -> str:
         if not location:
