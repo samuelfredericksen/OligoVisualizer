@@ -23,7 +23,7 @@ class Nucleotide:
     position: int                 # 0-based, 5' end first
     display: str                  # letter drawn on the tile: "A".."U","I","N","R",…,"?" for a mix
     alternatives: tuple[str, ...]  # ("A",) normally; ("A","G") for R; () for a custom mix
-    sugar: str                    # "d" | "r" | "m" | "LNA"
+    sugar: str                    # "d" | "r" | "m" | "LNA" | "F" | "MOE"
     ps_after: bool
     raw: str                      # exact substring consumed, e.g. "mA*"
 
@@ -77,6 +77,20 @@ PLAIN_BASES = ("A", "C", "G", "T", "U", "I")
 MOD_CODE_CHARS = set(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 )
+
+
+def _sugar_base_codes() -> dict[str, tuple[str, str]]:
+    codes: dict[str, tuple[str, str]] = {}
+    for base in "ACGUT":
+        codes[f"i2F{base}"] = (base, "F")
+    for base in "ACGUT":
+        codes[f"i2MOEr{base}"] = (base, "MOE")
+        codes[f"52MOEr{base}"] = (base, "MOE")
+        codes[f"32MOEr{base}"] = (base, "MOE")
+    return codes
+
+
+SUGAR_BASE_CODES = _sugar_base_codes()
 
 # Characters that can appear in a run of nucleotides (bases, IUB codes, the
 # r/m prefixes and the LNA prefix).  Used only to decide whether text sitting
@@ -156,10 +170,11 @@ def parse(raw: str) -> Sequence:
                 )
                 i = j + 1
                 continue
-            pending.append(Modification(code, s[i:j + 1]))
             # IDT writes two adjacent codes as /5Phos/iSp18/, so a closing
-            # slash can also open the next code.  Only chain while the text up
-            # to the following slash cannot be read as nucleotides.
+            # slash can also open the next code.  Collect the whole chain,
+            # then read base codes (/i2FA/, /i2MOErC/) as nucleotides rather
+            # than as tags attached to a later base.
+            codes = [(code, i, j + 1)]
             while True:
                 k = s.find("/", j + 1)
                 if k == -1:
@@ -171,9 +186,18 @@ def parse(raw: str) -> Sequence:
                     or _looks_like_sequence(following)
                 ):
                     break
-                pending.append(Modification(following, s[j:k + 1]))
+                codes.append((following, j, k + 1))
                 j = k
-            i = j + 1
+            last_is_base = codes[-1][0] in SUGAR_BASE_CODES
+            for code_text, start, end in codes:
+                sugar_base = SUGAR_BASE_CODES.get(code_text)
+                if sugar_base is not None:
+                    base, sugar = sugar_base
+                    emit(base, (base,), sugar, start, end)
+                else:
+                    pending.append(Modification(code_text, s[start:end]))
+            if not last_is_base:
+                i = codes[-1][2]
             continue
 
         if c == "(":

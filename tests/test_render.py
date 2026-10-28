@@ -13,6 +13,7 @@ class RenderSvgTest(unittest.TestCase):
             self.assertIn(colour, svg)
         self.assertNotIn('class="link ps"', svg)
         self.assertIn('width="426"', svg)
+        self.assertEqual(svg.count("<circle"), 4)
 
     def test_phosphorothioate_link_gets_badge(self):
         svg = render_svg(parse("A*C"))
@@ -31,11 +32,39 @@ class RenderSvgTest(unittest.TestCase):
         self.assertIn("url(#hatch)", render_svg(parse("ACGTN")))
         self.assertNotIn("url(#hatch)", render_svg(parse("ACGT")))
 
-    def test_sugar_superscripts(self):
+    def test_sugar_icons(self):
         svg = render_svg(parse("mA+CrG"))
-        self.assertIn(">m<", svg)
-        self.assertIn(">+<", svg)
-        self.assertIn(">r<", svg)
+        self.assertEqual(svg.count('class="sugar-icon"'), 3)
+        self.assertIn(">OMe<", svg)
+        self.assertIn(">LNA<", svg)
+        self.assertIn(">OH<", svg)
+        self.assertNotIn(">m<", svg)
+        self.assertNotIn(">+<", svg)
+
+    def test_bases_are_circles(self):
+        svg = render_svg(parse("A"))
+        self.assertIn("<circle", svg)
+        self.assertNotIn("<rect", svg)
+
+    def test_modified_base_codes_draw_sugar_icons_not_tags(self):
+        svg = render_svg(parse("/i2FA/i2FC/"))
+        self.assertEqual(svg.count('class="sugar-icon"'), 2)
+        self.assertIn(">F<", svg)
+        self.assertNotIn("/i2FA/", svg)
+        self.assertNotIn("/i2FC/", svg)
+
+    def test_fluoro_thymidine_draws_f_icon_not_tag(self):
+        svg = render_svg(parse("/i2FT/"))
+        self.assertEqual(svg.count("<circle"), 1)
+        self.assertEqual(svg.count('class="sugar-icon"'), 1)
+        self.assertIn(">F<", svg)
+        self.assertNotIn("/i2FT/", svg)
+
+    def test_moe_codes_draw_moe_icons_and_ps(self):
+        svg = render_svg(parse("/52MOErA/*/i2MOErC/*/32MOErT/"))
+        self.assertEqual(svg.count('class="sugar-icon"'), 3)
+        self.assertEqual(svg.count(">MOE<"), 3)
+        self.assertEqual(svg.count('class="link ps"'), 2)
 
     def test_output_is_deterministic(self):
         self.assertEqual(
@@ -56,9 +85,19 @@ class LegendItemsTest(unittest.TestCase):
         tags = [item["label"] for item in items if item["kind"] == "tag"]
 
         self.assertEqual(bases, ["A", "C"])
-        self.assertEqual(sugars, ["m", "+"])
+        self.assertEqual(sugars, ["2'-OMe", "LNA"])
         self.assertEqual(links, ["phosphate", "phosphorothioate"])
         self.assertEqual(tags, ["/3Bio/"])
+        for item in items:
+            if item["kind"] == "sugar":
+                self.assertTrue(item["icon"])
+
+    def test_legend_for_fluoro_and_moe(self):
+        items = legend_items(parse("/i2FA/i2MOErC/"))
+        sugars = [item for item in items if item["kind"] == "sugar"]
+        self.assertEqual([item["label"] for item in sugars], ["2'-F", "2'-MOE"])
+        self.assertIn(">F<", sugars[0]["icon"])
+        self.assertIn(">MOE<", sugars[1]["icon"])
 
     def test_base_entry_carries_tile_colours(self):
         entry = legend_items(parse("A"))[0]

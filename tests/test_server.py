@@ -43,6 +43,19 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(len(payload["errors"]), 1)
         self.assertEqual(payload["svg"].count('class="tile"'), 4)
 
+    def test_modified_base_codes_render(self):
+        response = self.client.get(
+            "/api/render", query_string={"seq": "/i2FA/*/i2FC/"}
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertIs(payload["ok"], True)
+        self.assertEqual(
+            payload["summary"], "2 nt · 1 PS linkage · 0 modifications"
+        )
+        self.assertIn('class="sugar-icon"', payload["svg"])
+        self.assertNotIn("/i2FA/", payload["svg"])
+
 
 if __name__ == "__main__":
     unittest.main()

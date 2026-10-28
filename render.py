@@ -38,13 +38,25 @@ TAG_STROKE = "#B58900"
 TAG_TEXT = "#1A1A1A"
 INK = "#1A1A1A"
 
-SUGAR_GLYPH = {"r": "r", "m": "m", "LNA": "+", "MOE": "MOE"}
+SUGAR_ICON_TEXT = {"r": "OH", "m": "OMe", "LNA": "LNA", "F": "F", "MOE": "MOE"}
+SUGAR_LABEL = {
+    "r": "2'-OH",
+    "m": "2'-OMe",
+    "LNA": "LNA",
+    "F": "2'-F",
+    "MOE": "2'-MOE",
+}
 SUGAR_MEANING = {
     "r": "ribose (2'-OH)",
     "m": "2'-O-methyl",
-    "+": "locked nucleic acid (LNA)",
-    "MOE": "2'-MOE",
+    "LNA": "locked nucleic acid (LNA)",
+    "F": "2'-fluoro",
+    "MOE": "2'-O-methoxyethyl",
 }
+SUGAR_ICON_GAP = 4
+SUGAR_ICON_W = 44
+SUGAR_ICON_H = 30
+SUGAR_BOTTOM_EXTRA = 20
 
 
 def tag_width(raw: str) -> float:
@@ -152,28 +164,27 @@ def _pack_tags(entries: list[dict]) -> int:
 
 def _tile_markup(nucleotide, x: int, y: int, hatch: bool, mix) -> list[str]:
     fill, text_colour = _tile_colours(nucleotide)
+    cx = x + TILE_W / 2
+    cy = y + TILE_H / 2
     parts = ['  <g class="tile">']
     parts.append(
-        f'    <rect x="{_fmt(x)}" y="{_fmt(y)}" width="{TILE_W}" '
-        f'height="{TILE_H}" rx="6" fill="{fill}"/>'
+        f'    <circle cx="{_fmt(cx)}" cy="{_fmt(cy)}" r="32" fill="{fill}"/>'
     )
     if hatch:
         parts.append(
-            f'    <rect x="{_fmt(x)}" y="{_fmt(y)}" width="{TILE_W}" '
-            f'height="{TILE_H}" rx="6" fill="url(#hatch)"/>'
+            f'    <circle cx="{_fmt(cx)}" cy="{_fmt(cy)}" r="32" fill="url(#hatch)"/>'
         )
     parts.append(
-        f'    <text x="{_fmt(x + TILE_W / 2)}" y="{_fmt(y + TILE_H / 2)}" '
+        f'    <text x="{_fmt(cx)}" y="{_fmt(cy)}" '
         f'text-anchor="middle" dominant-baseline="central" font-family="sans-serif" '
         f'font-size="30" font-weight="bold" fill="{text_colour}">'
         f"{_esc(nucleotide.display)}</text>"
     )
-    glyph = SUGAR_GLYPH.get(nucleotide.sugar)
-    if glyph:
+    if nucleotide.sugar != "d":
         parts.append(
-            f'    <text x="{_fmt(x + 56)}" y="{_fmt(y + 16)}" '
-            f'text-anchor="middle" font-family="sans-serif" font-size="12" '
-            f'font-weight="bold" fill="{text_colour}">{_esc(glyph)}</text>'
+            _sugar_icon_markup(
+                nucleotide.sugar, cx, y + TILE_H + SUGAR_ICON_GAP
+            )
         )
     if mix is not None:
         parts.extend(_mix_strips(mix.percentages, x, y))
@@ -182,18 +193,64 @@ def _tile_markup(nucleotide, x: int, y: int, hatch: bool, mix) -> list[str]:
 
 
 def _mix_strips(percentages: tuple[int, int, int, int], x: int, y: int) -> list[str]:
-    """Four proportional strips under the '?' glyph, A C G T left to right."""
+    """Four proportional strips inside the '?' circle, A C G T left to right."""
     parts = []
-    cursor = x + 4
+    cursor = x + 12
     strip_y = y + TILE_H / 2 + 20
     for glyph, percent in zip("ACGT", percentages):
-        width = max(2, percent * 46 // 100)
+        width = max(2, percent * 40 // 100)
         parts.append(
             f'    <rect x="{_fmt(cursor)}" y="{_fmt(strip_y)}" '
             f'width="{width}" height="4" fill="{BASE_COLOURS[glyph][0]}"/>'
         )
         cursor += width
     return parts
+
+
+def _sugar_icon_body(sugar: str) -> str:
+    """Mini pentose ring; origin at C1', the base attachment, y grows downward."""
+    parts = [
+        '<line x1="0" y1="-4" x2="0" y2="0" stroke="#1A1A1A" stroke-width="1.2"/>',
+        '<polygon points="0,0 9.51,6.91 5.88,18.09 -5.88,18.09 -9.51,6.91" '
+        'fill="#FFFFFF" stroke="#1A1A1A" stroke-width="1.2" '
+        'stroke-linejoin="round"/>',
+        '<line x1="5.88" y1="18.09" x2="8.2" y2="19.3" '
+        'stroke="#1A1A1A" stroke-width="1.2"/>',
+    ]
+    if sugar == "LNA":
+        parts.append(
+            '<line x1="5.88" y1="18.09" x2="-9.51" y2="6.91" stroke="#0072B2" '
+            'stroke-width="1.8" stroke-linecap="round"/>'
+        )
+    text = _esc(SUGAR_ICON_TEXT.get(sugar, sugar))
+    parts.append(
+        f'<text x="9.5" y="19.3" dominant-baseline="central" '
+        f'font-family="sans-serif" font-size="9" font-weight="600" '
+        f'fill="#1A1A1A">{text}</text>'
+    )
+    return "\n      ".join(parts)
+
+
+def _sugar_icon_markup(sugar: str, cx: float, top: float) -> str:
+    return (
+        f'    <g class="sugar-icon" '
+        f'transform="translate({_fmt(cx)}, {_fmt(top)})">\n'
+        f"      {_sugar_icon_body(sugar)}\n"
+        f"    </g>"
+    )
+
+
+def sugar_icon_svg(sugar: str) -> str:
+    """Standalone icon for the page legend."""
+    meaning = _esc(SUGAR_MEANING.get(sugar, sugar))
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" '
+        f'width="{SUGAR_ICON_W}" height="{SUGAR_ICON_H}" '
+        'viewBox="-12 -4 44 30" class="sugar-icon" role="img" '
+        f'aria-label="{meaning} sugar icon">'
+        + _sugar_icon_body(sugar)
+        + "</svg>"
+    )
 
 
 def _link_markup(start: int, end: int, y: int, ps: bool) -> list[str]:
@@ -254,7 +311,9 @@ def render_svg(seq: Sequence) -> str:
     top = 24 + lanes * (TAG_H + TAG_GAP) + 16
     tile_y = top
     width = pad_x + n * (TILE_W + LINK_W) - LINK_W + pad_x
-    height = top + TILE_H + 56
+    has_sugar = any(nucleotide.sugar != "d" for nucleotide in seq.nucleotides)
+    bottom_extra = SUGAR_BOTTOM_EXTRA if has_sugar else 0
+    height = top + TILE_H + 56 + bottom_extra
 
     has_hatch = any(_is_degenerate(nt) for nt in seq.nucleotides)
 
@@ -310,11 +369,11 @@ def render_svg(seq: Sequence) -> str:
 
     lines.extend(
         [
-            f'  <text x="{pad_x}" y="{_fmt(tile_y + TILE_H + 26)}" '
+            f'  <text x="{pad_x}" y="{_fmt(tile_y + TILE_H + 26 + bottom_extra)}" '
             f'text-anchor="start" font-family="sans-serif" font-size="14" '
             f'fill="{INK}">5\'</text>',
             f'  <text x="{_fmt(_tile_x(n - 1, pad_x) + TILE_W)}" '
-            f'y="{_fmt(tile_y + TILE_H + 26)}" text-anchor="end" '
+            f'y="{_fmt(tile_y + TILE_H + 26 + bottom_extra)}" text-anchor="end" '
             f'font-family="sans-serif" font-size="14" fill="{INK}">3\'</text>',
         ]
     )
@@ -346,17 +405,16 @@ def legend_items(seq: Sequence) -> list[dict]:
 
     seen_sugars: set[str] = set()
     for nucleotide in seq.nucleotides:
-        if nucleotide.sugar == "d":
+        sugar = nucleotide.sugar
+        if sugar == "d" or sugar in seen_sugars:
             continue
-        glyph = SUGAR_GLYPH.get(nucleotide.sugar, nucleotide.sugar)
-        if glyph in seen_sugars:
-            continue
-        seen_sugars.add(glyph)
+        seen_sugars.add(sugar)
         items.append(
             {
                 "kind": "sugar",
-                "label": glyph,
-                "meaning": SUGAR_MEANING.get(glyph, nucleotide.sugar),
+                "label": SUGAR_LABEL.get(sugar, sugar),
+                "meaning": SUGAR_MEANING.get(sugar, sugar),
+                "icon": sugar_icon_svg(sugar),
             }
         )
 

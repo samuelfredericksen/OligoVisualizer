@@ -68,6 +68,54 @@ class TestNotationTable(unittest.TestCase):
             seq.internal, {1: [Modification("5Me-dC", "/5Me-dC/")]}
         )
 
+    def test_fluoro_base_codes_are_nucleotides(self):
+        seq = parse("/i2FA/*/i2FC/*/i2FG/*/i2FU/")
+        self.assertEqual([nt.display for nt in seq.nucleotides], ["A", "C", "G", "U"])
+        self.assertTrue(all(nt.sugar == "F" for nt in seq.nucleotides))
+        self.assertEqual(
+            [nt.position for nt in seq.nucleotides if nt.ps_after], [0, 1, 2]
+        )
+        self.assertEqual(seq.five_prime, [])
+        self.assertEqual(seq.three_prime, [])
+        self.assertEqual(seq.internal, {})
+        self.assertEqual(seq.errors, [])
+
+    def test_fluoro_thymidine_code_is_a_nucleotide(self):
+        seq = parse("/i2FT/")
+        self.assertEqual(len(seq.nucleotides), 1)
+        self.assertEqual(seq.nucleotides[0].display, "T")
+        self.assertEqual(seq.nucleotides[0].sugar, "F")
+        self.assertEqual(seq.five_prime, [])
+        self.assertEqual(seq.errors, [])
+
+    def test_moe_base_codes_are_nucleotides(self):
+        seq = parse("/52MOErA/*/i2MOErC/*/32MOErT/")
+        self.assertEqual([nt.display for nt in seq.nucleotides], ["A", "C", "T"])
+        self.assertTrue(all(nt.sugar == "MOE" for nt in seq.nucleotides))
+        self.assertEqual(
+            [nt.position for nt in seq.nucleotides if nt.ps_after], [0, 1]
+        )
+        self.assertEqual(seq.three_prime, [])
+        self.assertEqual(seq.errors, [])
+
+    def test_code_before_modified_base_attaches_to_it(self):
+        seq = parse("/5Phos/i2FA/ACGT")
+        self.assertEqual([m.raw for m in seq.five_prime], ["/5Phos/"])
+        self.assertEqual(seq.nucleotides[0].sugar, "F")
+        self.assertEqual(len(seq.nucleotides), 5)
+
+    def test_code_after_modified_base_is_internal(self):
+        seq = parse("/i2FA/iSp18/GT")
+        self.assertEqual(
+            seq.internal, {0: [Modification("iSp18", "/iSp18/")]}
+        )
+        self.assertEqual([nt.display for nt in seq.nucleotides], ["A", "G", "T"])
+
+    def test_unknown_modified_base_code_stays_a_modification(self):
+        seq = parse("/i2FX/ACGT")
+        self.assertEqual([m.raw for m in seq.five_prime], ["/i2FX/"])
+        self.assertEqual(len(seq.nucleotides), 4)
+
     def test_modification_position_comes_from_placement(self):
         seq = parse("/ZEN/ACGT")
         self.assertEqual([m.code for m in seq.five_prime], ["ZEN"])

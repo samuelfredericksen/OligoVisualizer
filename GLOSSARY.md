@@ -53,7 +53,8 @@ _Avoid_: Thiolated linkage
 
 **Sugar modification**:
 A change to the ribose at a position: 2'-deoxy (DNA), ribose (`r`), 2'-O-methyl (`m`), LNA
-(`+`) or 2'-MOE.
+(`+`), 2'-fluoro (`/i2FA/`, `/i2FC/`, `/i2FG/`, `/i2FU/`, `/i2FT/`) or 2'-MOE
+(`/i2MOErA/`…`/i2MOErT/`, `/52MOEr…/`, `/32MOEr…/`).
 _Avoid_: Base modification (that is the nucleobase, not the sugar)
 
 **Degenerate base**:
@@ -70,7 +71,12 @@ The picture of the whole chain: tiles, connectors, tags, legend.
 _Avoid_: Diagram, graphic, chart
 
 **Tile**:
-The coloured square standing for one nucleotide.
+The coloured circle standing for one nucleotide.
+
+**Sugar icon**:
+The mini pentose ring drawn below a tile, labelled `OH`, `OMe`, `F`, `LNA` or `MOE`; absent for
+DNA, where the sugar is unmodified 2'-deoxyribose.
+_Avoid_: Sugar glyph, corner letter
 
 **Tag**:
 The small labelled box showing a modification code verbatim, attached to the tile or the

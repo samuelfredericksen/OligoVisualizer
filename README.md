@@ -1,8 +1,9 @@
 # OligoVisualizer V1
 
 Paste an oligonucleotide in IDT's own notation and see a schematic of the molecule: one
-horizontal 5' → 3' row, one coloured tile per nucleotide, the linkage drawn as the connector
-between tiles, and every modification code drawn as a labelled tag.
+horizontal 5' → 3' row, one coloured circle per nucleotide, a mini sugar ring below each
+modified position, the linkage drawn as the connector between circles, and every modification
+code drawn as a labelled tag.
 
 The on-screen heading still reads "Oligo viewer"; this file is the project's documentation.
 
@@ -21,13 +22,13 @@ Double-click **`Start Oligo Viewer.bat`**.
 
 |What you see|What it means|
 |---|---|
-|Coloured square with a letter|One nucleotide, in its base colour. Green A, blue C, amber G, vermilion T, pink U, light-blue I, grey for a degenerate base, pale grey `?` for a custom mix.|
-|Small letter in the tile's top-right corner|The sugar. No letter = DNA (2'-deoxy). `r` = ribose, `m` = 2'-O-methyl, `+` = LNA. (`MOE` exists in the drawing code for 2'-MOE, but V1 cannot produce it — IDT writes 2'-MOE as a catalog modification, not a base prefix.)|
-|Grey line between tiles|Ordinary phosphate linkage.|
-|Dark red line with a circled **S**|Phosphorothioate linkage at that position. A short red stub after the last tile means the terminal linkage is thioated too.|
-|Pale yellow box with a `/Code/`|A modification, printed exactly as you typed it. Above the first tile = 5' end, above the last tile = 3' end, between tiles = internal, attached to the nucleotide it follows.|
-|Grey hatched tile with a letter|A degenerate base (N, R, Y, …).|
-|Colour strip under `?`|A custom mix, split in A, C, G, T proportions.|
+|Coloured circle with a letter|One nucleotide, in its base colour. Green A, blue C, amber G, vermilion T, pink U, light-blue I, grey for a degenerate base, pale grey `?` for a custom mix.|
+|Mini pentose ring below a circle|The sugar at that position. No ring = DNA (2'-deoxy). The ring's label reads `OH` = ribose, `OMe` = 2'-O-methyl, `F` = 2'-fluoro, `LNA` = locked nucleic acid (blue bridge), `MOE` = 2'-O-methoxyethyl.|
+|Grey line between circles|Ordinary phosphate linkage.|
+|Dark red line with a circled **S**|Phosphorothioate linkage at that position. A short red stub after the last circle means the terminal linkage is thioated too.|
+|Pale yellow box with a `/Code/`|A modification, printed exactly as you typed it. Above the first circle = 5' end, above the last circle = 3' end, between circles = internal, attached to the nucleotide it follows.|
+|Grey hatched circle with a letter|A degenerate base (N, R, Y, …).|
+|Colour strip inside `?`|A custom mix, split in A, C, G, T proportions.|
 |`12 nt · 1 PS linkage · 2 modifications`|Length, number of thioated linkages, number of modification codes.|
 
 A legend under the picture lists only the glyphs that sequence actually uses.
@@ -37,13 +38,17 @@ A legend under the picture lists only the glyphs that sequence actually uses.
 ```
 /5Biosg/TTTTTT*GGGGGG/3Bio/           5' biotin, six thioated linkages, 3' biotin
 /5ThioMC6-D/mA*+C*rG/3ThioMC3-D/      thiol modifier, 2'-OMe / LNA / ribose, two PS
+/i2FA/*/i2FC/*/i2FG/*/i2FU/           2'-fluoro A/C/G/U, three thioated linkages
+/52MOErA/*/i2MOErC/*/32MOErT/         2'-MOE bases, internal and terminal, two PS
 ACGTN                                 plain DNA plus a degenerate last base
 AC(10203040)T                         custom mix: 10% A, 20% C, 30% G, 40% T
 ```
 
 Accepted: `A C G T U I` in any case; IUB codes `R Y S W K M B D H V N` in uppercase; `r`, `m`
-and `+` prefixes; `*` after a nucleotide for a phosphorothioate; `/Code/` in any of IDT's
-spellings; `(10203040)` or `(name:10203040)` for a custom mix. Pasted `5'-…-3'` quoting and
+and `+` prefixes; IDT 2'-F base codes (`/i2FA/`, `/i2FC/`, `/i2FG/`, `/i2FU/`, `/i2FT/`) and
+2'-MOE base codes (`/i2MOErA/`…`/i2MOErT/`, `/52MOErA/`…`/52MOErT/`,
+`/32MOErA/`…`/32MOErT/`); `*` after a nucleotide for a phosphorothioate; `/Code/` in any of
+IDT's spellings; `(10203040)` or `(name:10203040)` for a custom mix. Pasted `5'-…-3'` quoting and
 stray spaces or line breaks are ignored.
 
 Two rules worth knowing:
@@ -62,6 +67,8 @@ costs you that one character, not the sequence.
 ## Assumptions
 
 - `A*C` and `A*` describe the same linkage; the `*` belongs to the nucleotide before it.
+- IDT 2'-F and 2'-MOE base codes are nucleotides, not modification codes: they draw a circle
+  with the code's base letter and a sugar icon, and do not count as modifications in the summary.
 - Degenerate bases are hatched, custom mixes are split proportionally — a mixture with defined
   percentages is a different fact from an ambiguity code.
 - Rounding is not involved anywhere: lengths and counts are exact.
@@ -84,13 +91,13 @@ costs you that one character, not the sequence.
 |`static/index.html`|The page: textarea, debounced fetch, zoom, legend. No libraries, no build step.|
 |`GLOSSARY.md`|Domain vocabulary, including why "thiolated" is not used.|
 |`docs/adr/0001-server-rendered-svg.md`|Why the drawing happens in Python rather than the browser.|
-|`tests/`|40 `unittest` tests: parser, renderer, HTTP contract.|
+|`tests/`|52 `unittest` tests: parser, renderer, HTTP contract.|
 
 ## Tests
 
 ```
 py -m unittest tests.test_notation tests.test_render -v      # no venv needed
-.venv\Scripts\python.exe -m unittest discover -v             # all 40, includes the server
+.venv\Scripts\python.exe -m unittest discover -v             # all 52, includes the server
 ```
 
 ## If something goes wrong
